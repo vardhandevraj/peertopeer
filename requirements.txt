@@ -1,0 +1,16 @@
+# Root copy for Vercel (builds from repo root). Keep in sync with
+# CampusConnectAI/requirements.txt used by Render.
+Flask==3.0.3
+Flask-SocketIO==5.3.6
+requests==2.34.2
+groq
+psycopg2-binary
+supabase
+python-dotenv
+werkzeug
+gevent==26.9.0
+gevent-websocket
+gunicorn==21.2.0
+eventlet==0.41.2
+Pillow
+certifi

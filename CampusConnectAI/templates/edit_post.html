@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Post{% endblock %}
+
+{% block content %}
+    <section class="auth-page">
+        <section class="auth-panel login-panel">
+            <div class="auth-intro">
+                <div class="eyebrow">Modify Entry</div>
+                <h1>Edit your post</h1>
+                <p>Update or refine the content of your published discussion entry on IVY.</p>
+            </div>
+
+            <form class="auth-form" action="{{ url_for('edit_post', post_id=post.id) }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-row">
+                    <label for="content">Post Content</label>
+                    <textarea id="content" name="content" rows="6" required>{{ post.content }}</textarea>
+                </div>
+
+                <div class="form-row">
+                    <label for="post_type">Category</label>
+                    <select id="post_type" name="post_type" required>
+                        <option value="general" {% if post.post_type == "general" %}selected{% endif %}>General</option>
+                        <option value="question" {% if post.post_type == "question" %}selected{% endif %}>Academic Question</option>
+                        <option value="notes" {% if post.post_type == "notes" %}selected{% endif %}>Lecture Notes</option>
+                        <option value="tip" {% if post.post_type == "tip" %}selected{% endif %}>Study Tip</option>
+                    </select>
+                </div>
+
+                <button class="submit-button" type="submit">Save Changes</button>
+            </form>
+        </section>
+    </section>
+{% endblock %}

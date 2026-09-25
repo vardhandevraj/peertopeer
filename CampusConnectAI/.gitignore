@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+.secrets.json
+venv/
+.venv/
+static/uploads/*
+!static/uploads/.gitkeep
+node_modules/
+dist/
+.wrangler/

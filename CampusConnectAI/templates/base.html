@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}IVY{% endblock %} | IVY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+    <script src="{{ url_for('static', filename='icons.js') }}"></script>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar" id="appSidebar">
+            <a class="sidebar-brand" href="{{ url_for('feed') }}">
+                <img class="brand-logo" src="{{ url_for('static', filename='images/logo.webp') }}" alt="IVY">
+                <span class="sidebar-brand-name">IVY</span>
+            </a>
+
+            <nav class="sidebar-nav" aria-label="Primary">
+                {% set endpoint = request.endpoint or '' %}
+                {% set nav_items = [
+                    ('feed', 'Feed', 'home'),
+                    ('profile', 'Profile', 'user'),
+                    ('students', 'Students', 'users'),
+                    ('messages', 'Messages', 'message-square'),
+                    ('notifications', 'Notifications', 'bell'),
+                    ('resources', 'Resources', 'book-open'),
+                    ('search', 'Search', 'search'),
+                    ('ai_assistant', 'AI Assistant', 'sparkles')
+                ] %}
+                {% for href, label, icon in nav_items %}
+                    <a class="sidebar-link {% if endpoint == href %}is-active{% endif %}" href="{{ url_for(href) }}" {% if endpoint == href %}aria-current="page"{% endif %}>
+                        <i data-lucide="{{ icon }}"></i>
+                        <span>{{ label }}</span>
+                    </a>
+                {% endfor %}
+                {% if is_admin_user() %}
+                    <a class="sidebar-link {% if endpoint == 'admin_reports' %}is-active{% endif %}" href="{{ url_for('admin_reports') }}">
+                        <i data-lucide="shield-check"></i>
+                        <span>Moderation</span>
+                    </a>
+                {% endif %}
+            </nav>
+
+            <div class="sidebar-footer">
+                <button id="themeToggle" class="sidebar-theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+                    <i data-lucide="sun" class="sun-icon"></i>
+                    <i data-lucide="moon" class="moon-icon"></i>
+                    <span class="sidebar-theme-label">Theme</span>
+                </button>
+
+                {% set cu = current_user() %}
+                <div class="sidebar-account">
+                    {% if cu and cu.profile_picture and (cu.profile_picture.startswith("http") or cu.profile_picture.startswith("uploads/")) %}
+                        <img class="sidebar-avatar" src="{{ media_url(cu.profile_picture) }}" alt="{{ cu.full_name or 'Profile' }}">
+                    {% else %}
+                        <div class="sidebar-avatar">{{ (cu.full_name or '?')[:1] }}</div>
+                    {% endif %}
+                    <div class="sidebar-account-copy">
+                        <strong>{{ cu.full_name if cu else '' }}</strong>
+                        <span>{{ cu.email if cu else '' }}</span>
+                        {% if cu and cu.role == 'ADMIN' %}
+                            <span class="sidebar-role-badge">Admin</span>
+                        {% endif %}
+                    </div>
+                    <a class="sidebar-logout" href="{{ url_for('logout') }}" title="Sign out" aria-label="Sign out">
+                        <i data-lucide="log-out"></i>
+                    </a>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="app-flash" role="status">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <a class="ai-fab" href="{{ url_for('ai_assistant') }}" aria-label="Ask IVY" title="Ask IVY">
+        <i data-lucide="sparkles"></i>
+    </a>
+
+    <nav class="mobile-bottom-nav" aria-label="Mobile primary">
+        {% set endpoint = request.endpoint or '' %}
+        <a class="bottom-nav-link {% if endpoint == 'feed' %}is-active{% endif %}" href="{{ url_for('feed') }}">
+            <i data-lucide="home"></i><span>Feed</span>
+        </a>
+        <a class="bottom-nav-link {% if endpoint == 'messages' %}is-active{% endif %}" href="{{ url_for('messages') }}">
+            <i data-lucide="message-square"></i><span>Chats</span>
+        </a>
+        <a class="bottom-nav-link {% if endpoint == 'ai_assistant' %}is-active{% endif %}" href="{{ url_for('ai_assistant') }}">
+            <i data-lucide="sparkles"></i><span>IVY</span>
+        </a>
+        <a class="bottom-nav-link {% if endpoint == 'notifications' %}is-active{% endif %}" href="{{ url_for('notifications') }}">
+            <i data-lucide="bell"></i><span>Alerts</span>
+        </a>
+        <a class="bottom-nav-link {% if endpoint == 'profile' %}is-active{% endif %}" href="{{ url_for('profile') }}">
+            <i data-lucide="user"></i><span>Profile</span>
+        </a>
+    </nav>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
