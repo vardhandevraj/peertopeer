@@ -20,16 +20,16 @@
                     </div>
                 {% endif %}
 
-                <div>
+                <div class="profile-identity">
                     <h1>
                         {{ profile_user.full_name }}
                         <span class="presence-dot {% if is_online(profile_user.id) %}is-online{% endif %}" title="{{ 'Online' if is_online(profile_user.id) else 'Offline' }}"></span>
                     </h1>
-                    <p>{{ profile_user.department }} · {{ profile_user.study_year }}</p>
+                    <p class="profile-meta">{{ profile_user.department }} · {{ profile_user.study_year }}</p>
                     <div class="profile-stats">
-                        <span>{{ stats.followers }} followers</span>
-                        <span>{{ stats.following }} following</span>
-                        <span>{{ stats.friends }} peers</span>
+                        <span class="profile-stat"><strong>{{ stats.followers }}</strong> followers</span>
+                        <span class="profile-stat"><strong>{{ stats.following }}</strong> following</span>
+                        <span class="profile-stat"><strong>{{ stats.friends }}</strong> peers</span>
                     </div>
                 </div>
             </div>
@@ -80,7 +80,7 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="target_type" value="user">
                     <input type="hidden" name="target_id" value="{{ profile_user.id }}">
-                    <select class="report-select" name="reason" required>
+                    <select class="report-select" name="reason" aria-label="Reason for reporting this content" required>
                         <option value="" selected disabled>Report</option>
                         <option value="spam">Spam</option>
                         <option value="harassment">Harassment</option>
@@ -186,7 +186,7 @@
 
                                     <form class="comment-form" action="{{ url_for('add_comment', post_id=post.id) }}" method="POST">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <input type="text" name="comment_text" placeholder="Write a response..." required>
+                                        <input type="text" name="comment_text" placeholder="Write a response..." aria-label="Write a comment" required>
                                         <button type="submit">Reply</button>
                                     </form>
                                 </div>

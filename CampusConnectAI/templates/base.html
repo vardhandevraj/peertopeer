@@ -41,7 +41,8 @@
                     </a>
                 {% endfor %}
                 {% if is_admin_user() %}
-                    <a class="sidebar-link {% if endpoint == 'admin_reports' %}is-active{% endif %}" href="{{ url_for('admin_reports') }}">
+                    {% set moderation_active = endpoint in ('admin_reports', 'admin_report_detail') %}
+                    <a class="sidebar-link {% if moderation_active %}is-active{% endif %}" href="{{ url_for('admin_reports') }}" {% if moderation_active %}aria-current="page"{% endif %}>
                         <i data-lucide="shield-check"></i>
                         <span>Moderation</span>
                     </a>
@@ -95,21 +96,26 @@
 
     <nav class="mobile-bottom-nav" aria-label="Mobile primary">
         {% set endpoint = request.endpoint or '' %}
-        <a class="bottom-nav-link {% if endpoint == 'feed' %}is-active{% endif %}" href="{{ url_for('feed') }}">
-            <i data-lucide="home"></i><span>Feed</span>
-        </a>
-        <a class="bottom-nav-link {% if endpoint == 'messages' %}is-active{% endif %}" href="{{ url_for('messages') }}">
-            <i data-lucide="message-square"></i><span>Chats</span>
-        </a>
-        <a class="bottom-nav-link {% if endpoint == 'ai_assistant' %}is-active{% endif %}" href="{{ url_for('ai_assistant') }}">
-            <i data-lucide="sparkles"></i><span>IVY</span>
-        </a>
-        <a class="bottom-nav-link {% if endpoint == 'notifications' %}is-active{% endif %}" href="{{ url_for('notifications') }}">
-            <i data-lucide="bell"></i><span>Alerts</span>
-        </a>
-        <a class="bottom-nav-link {% if endpoint == 'profile' %}is-active{% endif %}" href="{{ url_for('profile') }}">
-            <i data-lucide="user"></i><span>Profile</span>
-        </a>
+        {% set mobile_items = [
+            ('feed', 'Feed', 'home'),
+            ('students', 'Students', 'users'),
+            ('messages', 'Chats', 'message-square'),
+            ('ai_assistant', 'IVY', 'sparkles'),
+            ('notifications', 'Alerts', 'bell'),
+            ('resources', 'Files', 'book-open'),
+            ('search', 'Search', 'search'),
+            ('profile', 'Profile', 'user')
+        ] %}
+        {% for href, label, icon in mobile_items %}
+            <a class="bottom-nav-link {% if endpoint == href %}is-active{% endif %}" href="{{ url_for(href) }}" {% if endpoint == href %}aria-current="page"{% endif %}>
+                <i data-lucide="{{ icon }}"></i><span>{{ label }}</span>
+            </a>
+        {% endfor %}
+        {% if is_admin_user() %}
+            <a class="bottom-nav-link {% if endpoint in ('admin_reports', 'admin_report_detail') %}is-active{% endif %}" href="{{ url_for('admin_reports') }}" {% if endpoint in ('admin_reports', 'admin_report_detail') %}aria-current="page"{% endif %}>
+                <i data-lucide="shield-check"></i><span>Review</span>
+            </a>
+        {% endif %}
     </nav>
 
     <script src="{{ url_for('static', filename='script.js') }}"></script>

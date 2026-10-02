@@ -29,19 +29,23 @@
             </div>
 
             <div class="form-row">
-                <label for="description">Summary & Key Highlights</label>
+                <label for="description">Summary &amp; Key Highlights</label>
                 <textarea id="description" name="description" rows="2" placeholder="Brief outline of the contents and topics covered..."></textarea>
             </div>
 
-            <div class="form-row two-columns">
-                <div>
-                    <label for="resource_file">Upload File</label>
-                    <input type="file" id="resource_file" name="resource_file" accept=".png,.jpg,.jpeg,.gif,.pdf,.ppt,.pptx">
-                </div>
+            <div class="form-row resource-source">
+                <p class="field-hint">Upload a file or link an external resource &mdash; one or the other.</p>
 
-                <div>
-                    <label for="link_url">External Reference URL (Optional)</label>
-                    <input type="url" id="link_url" name="link_url" placeholder="https://github.com/...">
+                <div class="resource-source-grid">
+                    <div class="resource-source-option">
+                        <label for="resource_file">Upload File</label>
+                        <input type="file" id="resource_file" name="resource_file" accept=".png,.jpg,.jpeg,.gif,.pdf,.ppt,.pptx">
+                    </div>
+
+                    <div class="resource-source-option">
+                        <label for="link_url">External Reference URL <span>(optional)</span></label>
+                        <input type="url" id="link_url" name="link_url" placeholder="https://github.com/...">
+                    </div>
                 </div>
             </div>
 
@@ -61,8 +65,13 @@
                             <a class="text-link" href="{{ media_url(resource.file_path) }}" download>Download File</a>
                         {% endif %}
 
-                        {% if resource.link_url %}
-                            <a class="text-link" href="{{ resource.link_url }}" target="_blank" rel="noopener noreferrer">Open URL</a>
+                        {# Re-validate on output too, so any row stored before
+                           server-side validation existed cannot execute script. #}
+                        {% set safe_link = safe_external_url(resource.link_url) %}
+                        {% if safe_link %}
+                            <a class="text-link" href="{{ safe_link }}" target="_blank" rel="noopener noreferrer">Open URL</a>
+                        {% elif resource.link_url %}
+                            <span class="text-link text-link--blocked" title="Only http:// and https:// links are allowed">Link unavailable</span>
                         {% endif %}
                     </div>
                 </article>

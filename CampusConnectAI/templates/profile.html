@@ -21,14 +21,14 @@
                         </div>
                     {% endif %}
 
-                    <div>
+                    <div class="profile-identity">
                         <h1>{{ profile_user.full_name }}</h1>
-                        <p>{{ profile_user.department }} · {{ profile_user.study_year }}</p>
-                        <p>{{ profile_user.email }}</p>
+                        <p class="profile-meta">{{ profile_user.department }} · {{ profile_user.study_year }}</p>
+                        <p class="profile-meta profile-meta-email">{{ profile_user.email }}</p>
                         <div class="profile-stats">
-                            <span>{{ stats.followers }} followers</span>
-                            <span>{{ stats.following }} following</span>
-                            <span>{{ stats.friends }} peers</span>
+                            <span class="profile-stat"><strong>{{ stats.followers }}</strong> followers</span>
+                            <span class="profile-stat"><strong>{{ stats.following }}</strong> following</span>
+                            <span class="profile-stat"><strong>{{ stats.friends }}</strong> peers</span>
                         </div>
                     </div>
                 </div>
@@ -115,7 +115,10 @@
                         </div>
                     </div>
 
-                    <button class="submit-button" type="submit">Save Changes</button>
+                    <div class="profile-form-actions">
+                        <p class="field-hint">Changes appear on your profile immediately.</p>
+                        <button class="small-action-button profile-save" type="submit">Save Changes</button>
+                    </div>
                 </form>
             </section>
         {% endif %}

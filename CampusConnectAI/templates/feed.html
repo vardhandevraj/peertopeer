@@ -7,11 +7,11 @@
     <form class="create-post-form" action="{{ url_for('create_post') }}" method="POST" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="composer-head">
-            <span class="composer-title">Share with your network</span>
+            <h1 class="composer-title">Share with your network</h1>
             <span class="composer-hint">Notes · questions · study tips</span>
         </div>
         <div class="form-row">
-            <textarea id="content" name="content" rows="3" placeholder="Share lecture notes, ask conceptual questions, or start a discussion..." required></textarea>
+            <textarea id="content" name="content" rows="3" placeholder="Share lecture notes, ask conceptual questions, or start a discussion..." aria-label="Post content" required></textarea>
         </div>
 
         <div class="form-row two-columns">
@@ -25,13 +25,17 @@
                 </select>
             </div>
 
-            <div>
+            <div class="upload-field">
                 <label for="post_file">Attach Resource</label>
                 <input type="file" id="post_file" name="post_file" accept=".png,.jpg,.jpeg,.gif,.pdf">
+                <span class="field-hint">PNG, JPG, GIF or PDF &mdash; optional.</span>
             </div>
         </div>
 
-        <button class="submit-button" type="submit">Publish Post</button>
+        <div class="composer-actions">
+            <p class="field-hint composer-actions-hint">Visible to everyone in your network.</p>
+            <button class="small-action-button composer-submit" type="submit">Publish Post</button>
+        </div>
     </form>
 
     <div class="feed-list">
@@ -103,7 +107,7 @@
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <input type="hidden" name="target_type" value="post">
                                 <input type="hidden" name="target_id" value="{{ post.id }}">
-                                <select class="report-select" name="reason" required>
+                                <select class="report-select" name="reason" aria-label="Reason for reporting this post" required>
                                     <option value="" selected disabled>Report</option>
                                     <option value="spam">Spam</option>
                                     <option value="inappropriate">Inappropriate</option>
@@ -137,7 +141,7 @@
 
                         <form class="comment-form" action="{{ url_for('add_comment', post_id=post.id) }}" method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="text" name="comment_text" placeholder="Write a response..." required>
+                            <input type="text" name="comment_text" placeholder="Write a response..." aria-label="Write a comment" required>
                             <button type="submit">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
                                 Reply

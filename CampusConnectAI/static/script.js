@@ -239,7 +239,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const menuButton = document.getElementById("menuButton");
     const navLinks = document.getElementById("navLinks");
-    if (menuButton && navLinks) menuButton.addEventListener("click", () => navLinks.classList.toggle("show"));
+    if (menuButton && navLinks) {
+        // The stylesheet reveals the mobile panel via `.nav-links.open`, so the
+        // toggle has to flip that exact class. Toggling "show" here (which is
+        // what this used to do) matched no rule and left the hamburger inert.
+        const closeMenu = () => {
+            navLinks.classList.remove("open");
+            menuButton.setAttribute("aria-expanded", "false");
+        };
+        menuButton.setAttribute("aria-expanded", "false");
+        menuButton.setAttribute("aria-controls", navLinks.id);
+        menuButton.addEventListener("click", () => {
+            const isOpen = navLinks.classList.toggle("open");
+            menuButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        });
+        // Following a link navigates away, but close first so the panel is
+        // never left open behind a restored bfcache page.
+        navLinks.querySelectorAll("a").forEach((link) => link.addEventListener("click", closeMenu));
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && navLinks.classList.contains("open")) {
+                closeMenu();
+                menuButton.focus();
+            }
+        });
+        document.addEventListener("click", (event) => {
+            if (!navLinks.contains(event.target) && !menuButton.contains(event.target)) closeMenu();
+        });
+    }
 
     // Auto-dismiss the global action toast; clicking it dismisses early.
     document.querySelectorAll(".app-flash").forEach((toast) => {

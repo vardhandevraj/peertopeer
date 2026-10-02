@@ -9,9 +9,9 @@
             <p>Query across students, course discussions, and shared academic resources on IVY.</p>
         </section>
 
-        <form class="search-form" action="{{ url_for('search') }}" method="GET">
-            <input type="text" name="q" value="{{ query }}" placeholder="Search by keyword, topic, student, or subject...">
-            <button type="submit">Search</button>
+        <form class="search-form" action="{{ url_for('search') }}" method="GET" role="search">
+            <input type="search" name="q" value="{{ query }}" placeholder="Search by keyword, topic, student, or subject..." aria-label="Search query">
+            <button class="small-action-button search-submit" type="submit">Search</button>
         </form>
 
         <section class="dashboard-grid">

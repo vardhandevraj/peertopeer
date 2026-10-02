@@ -15,7 +15,7 @@
         <div class="students-toolbar" role="search" aria-label="Filter students">
             <div class="students-search">
                 <i data-lucide="search" aria-hidden="true"></i>
-                <input type="search" id="studentSearch" placeholder="Search by name, department or year..." autocomplete="off">
+                <input type="search" id="studentSearch" placeholder="Search by name, department or year..." aria-label="Search students by name, department or year" autocomplete="off">
             </div>
             <div class="students-filter">
                 <i data-lucide="filter" aria-hidden="true"></i>
@@ -70,7 +70,7 @@
                         {% for request_item in pending_requests %}
                             <div class="student-row" data-search="{{ ((request_item.full_name or '') ~ ' ' ~ (request_item.department or '') ~ ' ' ~ (request_item.study_year or '')) | lower }}">
                                 <div class="presence-cell">
-                                    <span class="avatar mini-avatar presence-avatar">{{ request_item.full_name[:1] }}</span>
+                                    <span class="avatar mini-avatar presence-avatar {% if is_online(request_item.user_id) %}is-online{% endif %}">{{ request_item.full_name[:1] }}</span>
                                     <div class="student-meta">
                                         <a class="student-name-link" href="{{ url_for('public_profile', user_id=request_item.user_id) }}">{{ request_item.full_name }}</a>
                                         <p>
@@ -153,18 +153,28 @@
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button class="small-action-button light-button" type="submit">Unfollow</button>
                                     </form>
-                                    <form action="{{ url_for('report_content') }}" method="POST" class="report-form">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <input type="hidden" name="target_type" value="user">
-                                        <input type="hidden" name="target_id" value="{{ student.id }}">
-                                        <select class="students-report-select" name="reason" required>
-                                            <option value="" selected disabled>Report</option>
-                                            <option value="spam">Spam</option>
-                                            <option value="harassment">Harassment</option>
-                                            <option value="other">Other</option>
-                                        </select>
-                                        <button class="small-action-button light-button" type="submit">Submit</button>
-                                    </form>
+
+                                    {# Reporting is a low-frequency, destructive-adjacent
+                                       action, so it lives in the overflow menu instead of
+                                       competing with Connect and Follow. #}
+                                    <details class="row-menu">
+                                        <summary aria-label="More options for {{ student.full_name }}">&#8943;</summary>
+                                        <div class="row-menu-popover">
+                                            <form action="{{ url_for('report_content') }}" method="POST" class="report-form">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <input type="hidden" name="target_type" value="user">
+                                                <input type="hidden" name="target_id" value="{{ student.id }}">
+                                                <label class="field-label" for="report_reason_{{ student.id }}">Report {{ student.full_name }}</label>
+                                                <select class="students-report-select" id="report_reason_{{ student.id }}" name="reason" required>
+                                                    <option value="" selected disabled>Choose a reason</option>
+                                                    <option value="spam">Spam</option>
+                                                    <option value="harassment">Harassment</option>
+                                                    <option value="other">Other</option>
+                                                </select>
+                                                <button class="small-action-button danger-button" type="submit">Submit report</button>
+                                            </form>
+                                        </div>
+                                    </details>
                                 </div>
                             </div>
                         {% endfor %}
