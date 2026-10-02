@@ -39,8 +39,19 @@ load_dotenv(os.path.join(os.path.dirname(BASE_DIR), ".env"))
 app = Flask(__name__)
 
 # A secret key allows Flask sessions and flash messages to work.
-# In deployment, set SECRET_KEY in the server environment.
-app.secret_key = os.environ.get("SECRET_KEY", "campus-connect-ai-beginner-secret")
+# There is deliberately no fallback value: Flask signs the whole session cookie
+# with this key, so a key that is committed to the repository or shared
+# between deployments would let anyone forge a session (including
+# session["role"] = "ADMIN"). A missing key must stop the app from booting.
+_secret_key = os.environ.get("SECRET_KEY")
+if not _secret_key:
+    raise RuntimeError(
+        "SECRET_KEY is not set. Generate one with "
+        "`python -c \"import secrets; print(secrets.token_hex(32))\"` and add it "
+        "to CampusConnectAI/.env (and your host's environment) before starting "
+        "the app."
+    )
+app.secret_key = _secret_key
 
 # Trust Render's proxy so X-Forwarded-Proto/Host are used, which keeps
 # url_for(_external=True) building https:// URLs (needed for Google OAuth's
@@ -187,7 +198,7 @@ def inject_media_url():
         if path.startswith("uploads/"):
             return url_for("static", filename=path)
         return path
-    return dict(media_url=media_url)
+    return dict(media_url=media_url, safe_external_url=safe_external_url)
 
 
 # IVY receives enough local chat history to resolve follow-up questions, without
@@ -272,27 +283,86 @@ def db_cursor(connection, dictionary=False):
     return connection.cursor()
 
 
-def allowed_file(filename):
-    """Check whether an uploaded file has an allowed extension."""
+def allowed_file(filename, mime_type=None):
+    """Check whether an uploaded file has an allowed extension and MIME type."""
     if "." not in filename:
         return False
 
     extension = filename.rsplit(".", 1)[1].lower()
-    return extension in app.config["ALLOWED_EXTENSIONS"]
+    if extension not in app.config["ALLOWED_EXTENSIONS"]:
+        return False
+
+    # Additional MIME type validation for security
+    if mime_type:
+        allowed_mimes = {
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "pdf": "application/pdf",
+            "ppt": "application/vnd.ms-powerpoint",
+            "pptx": (
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ),
+        }
+        expected_mime = allowed_mimes.get(extension)
+        if expected_mime and mime_type != expected_mime:
+            return False
+
+    return True
 
 
-def allowed_image(filename):
+def allowed_image(filename, mime_type=None):
     """Check whether an uploaded profile file is an image."""
     if "." not in filename:
         return False
 
     extension = filename.rsplit(".", 1)[1].lower()
-    return extension in app.config["IMAGE_EXTENSIONS"]
+    if extension not in app.config["IMAGE_EXTENSIONS"]:
+        return False
+
+    # Additional MIME type validation for security
+    if mime_type:
+        allowed_mimes = {
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+        }
+        expected_mime = allowed_mimes.get(extension)
+        if expected_mime and mime_type != expected_mime:
+            return False
+
+    return True
+
+
+def safe_external_url(raw_url):
+    """Return a normalised http(s) URL, or None when the value is unusable.
+
+    Resource links are rendered straight into an `href`, and Jinja escapes
+    quotes and angle brackets but not URL *schemes*. Without this check any
+    student could store `javascript:...` and get script execution in every
+    other student's browser when the link is clicked. Only http and https are
+    accepted, which is all the resources page ever needs.
+    """
+    candidate = (raw_url or "").strip()
+    if not candidate:
+        return None
+    try:
+        parts = urllib.parse.urlsplit(candidate)
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ("http", "https"):
+        return None
+    if not parts.netloc:
+        return None
+    return candidate
 
 
 def save_uploaded_file(uploaded_file, file_prefix, bucket_name, max_dimension=1600):
     """Save an uploaded file and return the path stored in Supabase."""
     if supabase is None:
+        print("Warning: Supabase not configured; file upload will fail.")
         return ""
 
     safe_name = secure_filename(uploaded_file.filename)
@@ -488,11 +558,19 @@ def send_email(to_address, subject, html_body):
                 headers={"api-key": api_key, "Content-Type": "application/json"},
                 timeout=30,
             )
-            print(f"Brevo API send OK ({status}): {body[:120]}")
-            return True
         except Exception as error:
             print(f"Brevo API send failed: {error}")
             return False
+
+        # Brevo answers 201 on an accepted message. Any other code means the mail
+        # was rejected (bad key, unverified sender, rate limit), so the send did
+        # not happen and must not be reported as a success.
+        if 200 <= status < 300:
+            print(f"Brevo API send OK ({status}): {body[:120]}")
+            return True
+
+        print(f"Brevo API rejected the message ({status}): {body[:300]}")
+        return False
 
     smtp_host = os.environ.get("SMTP_HOST")
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
@@ -568,15 +646,20 @@ def create_auth_token(user_id, token_type, ttl_hours=24):
     return token
 
 
-def consume_auth_token(token, token_type):
-    """Return the user id for a valid, unused, unexpired token, or None."""
+def _fetch_auth_token(token, token_type):
+    """Return the row for a valid, unused, unexpired token, or None.
+
+    This is a read-only lookup: the token is NOT burned, so a page refresh or
+    a "passwords do not match" re-render can still use the same link. Call
+    consume_auth_token() to actually spend it.
+    """
     connection = get_db_connection()
     try:
         cursor = db_cursor(connection, dictionary=True)
         cursor.execute(
             """
             SELECT auth_tokens.user_id, auth_tokens.expires_at, auth_tokens.used_at,
-                   users.is_verified, users.is_admin
+                   users.email, users.is_verified, users.is_admin
             FROM auth_tokens
             INNER JOIN users ON users.id = auth_tokens.user_id
             WHERE auth_tokens.token = %s AND auth_tokens.token_type = %s
@@ -586,11 +669,53 @@ def consume_auth_token(token, token_type):
         row = cursor.fetchone()
         if not row:
             return None
-        if row["used_at"] or row["expires_at"] < datetime.now():
+        # expires_at is NOT NULL in the schema, but treat a missing value as
+        # expired rather than raising a TypeError on a 500.
+        if row["used_at"] or not row["expires_at"] or row["expires_at"] < datetime.now():
             return None
-        cursor.execute("UPDATE auth_tokens SET used_at = CURRENT_TIMESTAMP WHERE token = %s", (token,))
-        connection.commit()
         return row
+    except Error:
+        return None
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+
+def consume_auth_token(token, token_type):
+    """Validate and burn a single-use token in one statement.
+
+    Returns the token row on success, or None when the token is unknown,
+    already used, expired, or was just consumed by a concurrent request. The
+    UPDATE ... RETURNING guard makes double-spending impossible even if two
+    reset submissions race each other.
+    """
+    connection = get_db_connection()
+    try:
+        cursor = db_cursor(connection, dictionary=True)
+        cursor.execute(
+            """
+            UPDATE auth_tokens
+            SET used_at = CURRENT_TIMESTAMP
+            WHERE token = %s AND token_type = %s
+              AND used_at IS NULL
+              AND expires_at >= %s
+            RETURNING user_id
+            """,
+            (token, token_type, datetime.now()),
+        )
+        row = cursor.fetchone()
+        if not row:
+            connection.rollback()
+            return None
+        cursor.execute(
+            "SELECT email, is_verified, is_admin FROM users WHERE id = %s",
+            (row["user_id"],),
+        )
+        user = cursor.fetchone() or {}
+        connection.commit()
+        return {**dict(row), **dict(user)}
     except Error:
         return None
     finally:
@@ -708,13 +833,27 @@ def index():
 def register():
     """Show the registration form and save a new student account."""
     if request.method == "POST":
-        full_name = request.form.get("full_name")
-        email = request.form.get("email")
+        full_name = (request.form.get("full_name") or "").strip()
+        email = (request.form.get("email") or "").strip()
         department = request.form.get("department")
         year = request.form.get("year")
-        password = request.form.get("password")
-        confirm_password = request.form.get("confirm_password")
+        password = request.form.get("password") or ""
+        confirm_password = request.form.get("confirm_password") or ""
         bio = request.form.get("bio")
+
+        # users.email is NOT NULL, so an empty address would otherwise surface
+        # the raw Postgres constraint error in the flash message.
+        if not full_name or not email or "@" not in email:
+            flash("Please enter your name and a valid email address.")
+            return redirect(url_for("register"))
+        # A run of spaces is six characters long, so the length check alone
+        # would let an effectively blank password through.
+        if not password.strip():
+            flash("Please choose a password.")
+            return redirect(url_for("register"))
+        if len(password) < 6:
+            flash("Your password must be at least 6 characters long.")
+            return redirect(url_for("register"))
         if not password or password != confirm_password:
             flash("Passwords do not match. Please try again.")
             return redirect(url_for("register"))
@@ -765,8 +904,17 @@ def register():
 def login():
     """Show the login form and check student credentials."""
     if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password") or ""
+
+        # Reject empty credentials before touching the database: a blank
+        # password field would otherwise reach check_password_hash(), which
+        # raises AttributeError rather than returning False. A whitespace-only
+        # password is stripped too, so it is caught by the same guard instead of
+        # failing as a wrong password.
+        if not email or not password or not password.strip():
+            flash("Please enter both your email and password.")
+            return redirect(url_for("login"))
 
         try:
             connection = get_db_connection()
@@ -843,7 +991,11 @@ def forgot_password():
 
         # Always show the same message to avoid revealing whether an email exists.
         if user:
-            send_password_reset_email(user["id"], email)
+            if not send_password_reset_email(user["id"], email):
+                # The neutral message below is still shown on purpose, but the
+                # delivery failure has to be visible in the server log or a
+                # misconfigured mail provider looks like a working reset flow.
+                print(f"Password reset email could not be delivered for user {user['id']}")
         flash("If that email is registered, a password reset link has been sent.")
         return redirect(url_for("login"))
 
@@ -852,21 +1004,44 @@ def forgot_password():
 
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
 def reset_password(token):
-    """Let a student choose a new password with a valid reset token."""
-    record = consume_auth_token(token, "password_reset")
-    if not record:
-        flash("This reset link is invalid or has expired. Please request a new one.")
-        return redirect(url_for("forgot_password"))
+    """Let a student choose a new password with a valid reset token.
+
+    The token is only burned once a usable form has actually been submitted,
+    so opening the link, refreshing the page, or mistyping the confirmation
+    does not consume it.
+    """
+    invalid = (
+        "This reset link is invalid, has expired, or has already been used. "
+        "Please request a new one."
+    )
+
+    def re_render():
+        """Re-show the form while the token is still unspent, or bail out."""
+        record = _fetch_auth_token(token, "password_reset")
+        if not record:
+            flash(invalid)
+            return redirect(url_for("forgot_password"))
+        return render_template(
+            "reset_password.html", token=token, email=record.get("email")
+        )
 
     if request.method == "POST":
         password = request.form.get("password")
         confirm = request.form.get("confirm_password")
+
+        # Check the form before spending the token so a typo can be corrected
+        # without sending the student a brand new email link.
         if not password:
             flash("Please enter a new password.")
-            return render_template("reset_password.html", token=token)
+            return re_render()
         if password != confirm:
             flash("Passwords do not match.")
-            return render_template("reset_password.html", token=token)
+            return re_render()
+
+        record = consume_auth_token(token, "password_reset")
+        if not record:
+            flash(invalid)
+            return redirect(url_for("forgot_password"))
 
         try:
             connection = get_db_connection()
@@ -880,14 +1055,21 @@ def reset_password(token):
             return redirect(url_for("login"))
         except Error as error:
             flash(f"Database error: {error}")
-            return render_template("reset_password.html", token=token)
+            return redirect(url_for("forgot_password"))
         finally:
             if "connection" in locals() and not connection.closed:
                 if "cursor" in locals():
                     cursor.close()
                 connection.close()
 
-    return render_template("reset_password.html", token=token)
+    record = _fetch_auth_token(token, "password_reset")
+    if not record:
+        flash(invalid)
+        return redirect(url_for("forgot_password"))
+
+    return render_template(
+        "reset_password.html", token=token, email=record.get("email")
+    )
 
 
 # ── Account deletion ────────────────────────────────────────────────────────
@@ -1347,7 +1529,7 @@ def google_callback():
         state_param = request.args.get("state")
         code = request.args.get("code")
         # Validate the CSRF state we stored in the session at /login/google.
-        state_data = session.pop("google_oauth_state", None)
+        state_data = session.get("google_oauth_state", None)
         if not state_param or not code or not state_data or state_data.get("state") != state_param:
             raise ValueError("This sign-in link has expired or was already used.")
 
@@ -1449,6 +1631,7 @@ def google_callback():
         update_last_seen(user["id"])
 
         flash("Signed in with Google. Welcome back!")
+        session.pop("google_oauth_state", None)  # Clear used OAuth state
         return redirect(url_for("feed"))
 
     except Exception as error:
@@ -1584,7 +1767,7 @@ def create_post():
         return redirect(url_for("feed"))
 
     if uploaded_file and uploaded_file.filename:
-        if allowed_file(uploaded_file.filename):
+        if allowed_file(uploaded_file.filename, mime_type=getattr(uploaded_file, 'mimetype', None)):
             file_path = save_uploaded_file(uploaded_file, f"user_{session['user_id']}_post", STORAGE_BUCKETS["post"])
             file_type = uploaded_file.filename.rsplit(".", 1)[1].lower()
         else:
@@ -1711,32 +1894,39 @@ def like_post(post_id):
         flash("Please login before liking posts.")
         return redirect(url_for("login"))
 
+    connection = None
     try:
         connection = get_db_connection()
         cursor = db_cursor(connection, dictionary=True)
 
-        # This SELECT query checks whether this student already liked the post.
+        # Atomic toggle: the DELETE removes an existing like, otherwise the
+        # INSERT adds one. Both run in one statement, and a data-modifying CTE
+        # sees the pre-statement snapshot, so the INSERT hits the row the DELETE
+        # is removing and ON CONFLICT DO NOTHING keeps the result a clean
+        # toggle even when two requests race.
         cursor.execute(
-            "SELECT id FROM likes WHERE post_id = %s AND user_id = %s",
-            (post_id, session["user_id"]),
-        )
-        existing_like = cursor.fetchone()
-
-        if existing_like:
-            # This DELETE query removes the like.
-            cursor.execute("DELETE FROM likes WHERE id = %s", (existing_like["id"],))
-            flash("Like removed.")
-        else:
-            # This INSERT query adds a like to the post.
-            cursor.execute(
-                "INSERT INTO likes (post_id, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                (post_id, session["user_id"]),
+            """
+            WITH deleted AS (
+                DELETE FROM likes WHERE post_id = %s AND user_id = %s
+                RETURNING 1
+            ),
+            inserted AS (
+                INSERT INTO likes (post_id, user_id) VALUES (%s, %s)
+                ON CONFLICT (post_id, user_id) DO NOTHING
+                RETURNING 1
             )
+            SELECT
+                (SELECT COUNT(*) FROM deleted) AS removed,
+                (SELECT COUNT(*) FROM inserted) AS added
+            """,
+            (post_id, session["user_id"], post_id, session["user_id"]),
+        )
+        result = cursor.fetchone() or {"removed": 0, "added": 0}
 
-            # This SELECT query finds the post owner for a notification.
+        if result["added"]:
+            # A new like: tell the post's author.
             cursor.execute("SELECT user_id FROM posts WHERE id = %s", (post_id,))
             post_owner = cursor.fetchone()
-
             if post_owner:
                 create_notification(
                     post_owner["user_id"],
@@ -1744,16 +1934,23 @@ def like_post(post_id):
                     "like",
                     f"{session['full_name']} liked your post.",
                 )
-
             flash("Post liked.")
+        else:
+            # The like was taken back off; there is nothing to announce.
+            flash("Like removed.")
 
         connection.commit()
 
     except Error as error:
         flash(f"Database error: {error}")
+        # `connection` is bound inside the try, and a psycopg2 PoolError (a
+        # subclass of Error) can be raised by get_db_connection() itself, so it
+        # may still be None here.
+        if connection is not None:
+            connection.rollback()
 
     finally:
-        if "connection" in locals() and not connection.closed:
+        if connection is not None and not connection.closed:
             if "cursor" in locals():
                 cursor.close()
             connection.close()
@@ -1881,14 +2078,14 @@ def profile():
             cover_photo_file = request.files.get("cover_photo")
 
             if profile_picture_file and profile_picture_file.filename:
-                if allowed_image(profile_picture_file.filename):
+                if allowed_image(profile_picture_file.filename, mime_type=getattr(profile_picture_file, 'mimetype', None)):
                     profile_picture = save_uploaded_file(profile_picture_file, f"user_{session['user_id']}_profile", STORAGE_BUCKETS["profile"], max_dimension=512)
                 else:
                     flash("Profile picture must be PNG, JPG, JPEG, or GIF.")
                     return redirect(url_for("profile"))
 
             if cover_photo_file and cover_photo_file.filename:
-                if allowed_image(cover_photo_file.filename):
+                if allowed_image(cover_photo_file.filename, mime_type=getattr(cover_photo_file, 'mimetype', None)):
                     cover_photo = save_uploaded_file(cover_photo_file, f"user_{session['user_id']}_cover", STORAGE_BUCKETS["profile"])
                 else:
                     flash("Cover photo must be PNG, JPG, JPEG, or GIF.")
@@ -2174,7 +2371,24 @@ def send_friend_request(receiver_id):
 
     try:
         connection = get_db_connection()
-        cursor = connection.cursor()
+        cursor = db_cursor(connection, dictionary=True)
+
+        # Check for existing relationship - no new request if already friends or pending
+        cursor.execute(
+            """
+            SELECT id, status FROM friends
+            WHERE sender_id = %s AND receiver_id = %s
+            """,
+            (session["user_id"], receiver_id),
+        )
+        existing_request = cursor.fetchone()
+
+        if existing_request:
+            if existing_request["status"] == "accepted":
+                flash("You are already friends with this student.")
+            else:
+                flash("You already have a pending friend request to this student.")
+            return redirect_back("students")
 
         # This INSERT query creates a pending friend request.
         cursor.execute(
@@ -2638,7 +2852,7 @@ def create_group_conversation():
     if not member_ids:
         flash("Choose at least one student for the group.")
         return redirect(url_for("messages"))
-    if group_image and group_image.filename and not allowed_image(group_image.filename):
+    if group_image and group_image.filename and not allowed_image(group_image.filename, mime_type=getattr(group_image, 'mimetype', None)):
         flash("Group images must be PNG, JPG, JPEG, or GIF files.")
         return redirect(url_for("messages"))
 
@@ -3159,22 +3373,24 @@ def start_call_room(conversation_id):
             )
             connection.commit()
 
-            # Invite every other participant through their personal inbox room.
-            cursor.execute(
-                "SELECT user_id FROM conversation_participants WHERE conversation_id = %s AND user_id != %s",
-                (conversation_id, session["user_id"]),
+        # Invite every other participant through their personal inbox room.
+        # This runs for a reused room too, not just a fresh one: a room that was
+        # left and rejoined would otherwise never re-notify anyone.
+        cursor.execute(
+            "SELECT user_id FROM conversation_participants WHERE conversation_id = %s AND user_id != %s",
+            (conversation_id, session["user_id"]),
+        )
+        invitees = [row["user_id"] for row in cursor.fetchall()]
+        for invitee_id in invitees:
+            socketio.emit(
+                "call_invitation",
+                {
+                    "room_id": room_id,
+                    "conversation_id": conversation_id,
+                    "caller_name": session["full_name"],
+                },
+                room=f"user_{invitee_id}",
             )
-            invitees = [row["user_id"] for row in cursor.fetchall()]
-            for invitee_id in invitees:
-                socketio.emit(
-                    "call_invitation",
-                    {
-                        "room_id": room_id,
-                        "conversation_id": conversation_id,
-                        "caller_name": session["full_name"],
-                    },
-                    room=f"user_{invitee_id}",
-                )
 
         return redirect(url_for("call_room", room_id=room_id))
 
@@ -3291,6 +3507,36 @@ def mark_call_presence(room_id, user_id):
             connection.close()
 
 
+def mark_call_room_vacant(room_id):
+    """Record that everyone has disconnected without ending the room.
+
+    A room is only 'ended' when somebody explicitly hangs up (the end_call
+    event). A refresh, a closed tab, or a brief network drop empties the room
+    just as effectively, so the room must stay joinable: `join_call` rejects
+    rooms whose status is 'ended', and `start_call_room` only reuses rooms
+    that are not ended. Ending the room here meant a single participant
+    reloading the page permanently killed the call for everyone.
+    """
+    connection = None
+    cursor = None
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            "UPDATE call_room_participants SET left_at = COALESCE(left_at, CURRENT_TIMESTAMP) "
+            "WHERE room_id = %s",
+            (room_id,),
+        )
+        connection.commit()
+    except Error as error:
+        print(f"Call room vacate error: {error}")
+    finally:
+        if cursor:
+            cursor.close()
+        if connection and not connection.closed:
+            connection.close()
+
+
 def end_call_room(room_id):
     """Close a room for everyone: persist metadata and broadcast once."""
     connection = None
@@ -3346,8 +3592,10 @@ def release_call_socket(room_id, sid):
         )
 
     if not room_sockets:
+        # Everyone has gone, but the room itself stays active so a refresh or a
+        # dropped connection can rejoin it. Only an explicit hang-up ends it.
         del CALL_ROOM_SOCKETS[room_id]
-        end_call_room(room_id)
+        mark_call_room_vacant(room_id)
 
 
 @socketio.on("join_call")
@@ -3708,12 +3956,25 @@ def delete_notification(notification_id):
 
     try:
         connection = get_db_connection()
-        cursor = connection.cursor()
+        cursor = db_cursor(connection, dictionary=True)
         cursor.execute(
-            "DELETE FROM notifications WHERE id = %s AND user_id = %s",
-            (notification_id, session["user_id"]),
+            "SELECT id, user_id FROM notifications WHERE id = %s",
+            (notification_id,),
+        )
+        notification = cursor.fetchone()
+        if not notification:
+            flash("Notification not found.")
+            return redirect(url_for("notifications"))
+        if notification["user_id"] != session["user_id"]:
+            flash("You do not have permission to delete this notification.")
+            return redirect(url_for("notifications"))
+
+        cursor.execute(
+            "DELETE FROM notifications WHERE id = %s",
+            (notification_id,),
         )
         connection.commit()
+        flash("Notification deleted.")
     except Error as error:
         flash(f"Database error: {error}")
     finally:
@@ -3759,12 +4020,19 @@ def resources():
         title = request.form.get("title")
         description = request.form.get("description")
         resource_type = request.form.get("resource_type")
-        link_url = request.form.get("link_url")
+        raw_link_url = request.form.get("link_url")
         resource_file = request.files.get("resource_file")
         file_path = None
 
+        # Only http(s) links may be stored; anything else (javascript:, data:,
+        # vbscript:, a relative path) is rejected before it reaches the database.
+        link_url = safe_external_url(raw_link_url)
+        if raw_link_url and raw_link_url.strip() and link_url is None:
+            flash("The link must be a full http:// or https:// address.")
+            return redirect(url_for("resources"))
+
         if resource_file and resource_file.filename:
-            if allowed_file(resource_file.filename):
+            if allowed_file(resource_file.filename, mime_type=getattr(resource_file, 'mimetype', None)):
                 file_path = save_uploaded_file(resource_file, f"user_{session['user_id']}_resource", STORAGE_BUCKETS["resource"])
             else:
                 flash("Only image, PDF, and PPT files are allowed.")
@@ -4026,8 +4294,16 @@ def fetch_ai_sidebar_conversations(cursor, user_id):
 
 
 def gather_ai_database_context(question):
-    """Reuse the original assistant behaviour: surface related posts/resources."""
+    """Reuse the original assistant behaviour: surface related posts/resources.
+
+    Returns "" (rather than raising) on any failure, including pool
+    exhaustion, because this lookup is an optional enrichment for the prompt.
+    The connection is always released before returning so it is not held while
+    the caller waits on the AI provider.
+    """
     context = ""
+    connection = None
+    cursor = None
     try:
         connection = get_db_connection()
         cursor = db_cursor(connection, dictionary=True)
@@ -4044,12 +4320,14 @@ def gather_ai_database_context(question):
         )
         for resource in cursor.fetchall():
             context += f"Resource: {resource['title']} - {resource.get('description') or ''} - {resource.get('link_url') or ''}\n"
-
-        cursor.close()
-        connection.close()
-    except Error:
+    except (Error, RuntimeError) as error:
         # If the database query fails, continue without database context.
-        pass
+        print(f"AI database context lookup failed: {error}")
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if connection is not None and not connection.closed:
+            connection.close()
     return context
 
 
@@ -4345,6 +4623,15 @@ def send_ai_message(conversation_id):
         transcript_messages = cursor.fetchall()
         connection.commit()
 
+        # Release the connection before waiting on the AI provider. Groq can
+        # take many seconds, and the pool only has maxconn slots; holding a
+        # connection across that window (plus the one gather_ai_database_context
+        # needs) is what exhausted the pool under a few concurrent AI users.
+        cursor.close()
+        connection.close()
+        connection = None
+        cursor = None
+
         database_context = gather_ai_database_context(message_text)
 
         api_key = os.environ.get("GROQ_API_KEY")
@@ -4363,6 +4650,9 @@ def send_ai_message(conversation_id):
             reply_text = ("The AI service is missing its GROQ_API_KEY configuration. "
                           "Add it to your .env file and restart.")
 
+        # Check the connection back out for the reply insert.
+        connection = get_db_connection()
+        cursor = db_cursor(connection, dictionary=True)
         cursor.execute(
             """
             INSERT INTO ai_messages (conversation_id, role, content)
@@ -4394,7 +4684,10 @@ def send_ai_message(conversation_id):
             "title": generated_title,
         }
 
-    except Error as error:
+    except (Error, RuntimeError) as error:
+        # RuntimeError covers "Could not obtain a database connection from the
+        # pool" raised by _pooled_connection, which is not a psycopg2 Error and
+        # would otherwise escape as an unhandled 500.
         print(f"AI chat persistence error: {error}")
         return {"ok": False, "error": "Your message could not be saved. Please try again."}, 500
     finally:
@@ -4406,5 +4699,16 @@ def send_ai_message(conversation_id):
 
 # This block runs only when we start the file directly with:
 # python app.py
+#
+# Debug mode stays opt-in via IVY_DEBUG. Leaving it on unconditionally started
+# the Werkzeug reloader, which runs the app twice and leaves the old worker
+# holding the port after a restart — that is what caused the "port already in
+# use" failures. Set IVY_DEBUG=1 to re-enable it while developing.
 if __name__ == "__main__":
-    socketio.run(app, debug=True, port=int(os.environ.get("PORT", "5001")), allow_unsafe_werkzeug=True)
+    _debug = os.environ.get("IVY_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+    socketio.run(
+        app,
+        debug=_debug,
+        port=int(os.environ.get("PORT", "5001")),
+        allow_unsafe_werkzeug=True,
+    )

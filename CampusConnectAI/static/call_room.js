@@ -38,6 +38,15 @@
     const pendingCandidates = new Map(); // user_id -> [RTCIceCandidate]
     const tiles = new Map();          // user_id -> {tile, video, fallback}
     const mediaState = new Map();     // user_id -> {mic, cam, screen}
+    const peerRebuildTimers = new Map(); // user_id -> timeout id
+    const peerRebuildAttempts = new Map(); // user_id -> attempt count
+
+    // A failed ICE gathering/connection is recoverable, so the peer is rebuilt
+    // with a widening backoff instead of being abandoned. The last attempt
+    // stops retrying and tells the participant what happened.
+    const ICE_RECOVERY_GRACE_MS = 2500;
+    const PEER_REBUILD_BACKOFF_MS = [1500, 4000, 10000, 20000];
+    const MAX_PEER_REBUILD_ATTEMPTS = PEER_REBUILD_BACKOFF_MS.length;
 
     let localStream = null;
     let cameraTrack = null;
@@ -81,7 +90,9 @@
         video.playsInline = true;
         if (userId === currentUserId) {
             video.muted = true;
-            video.classList.add("is-mirrored");
+            // The stylesheet targets `.video-tile.is-mirrored video`, so the
+            // state class belongs on the tile, not on the <video> itself.
+            tile.classList.add("is-mirrored");
         }
         tile.appendChild(video);
 
@@ -118,6 +129,21 @@
         return tileEntry;
     }
 
+    // A tile is created the first time a track or a peer arrives, which is
+    // often before the peer's display name is known. Re-applying the name keeps
+    // the label and the fallback avatar correct instead of leaving every remote
+    // participant stuck on "Participant".
+    function applyTileName(userId, userName) {
+        if (!userName) return;
+        const entry = tiles.get(userId);
+        if (!entry) return;
+        entry.nameSpan.textContent = userName;
+        const hint = entry.tile.querySelector(".video-fallback small");
+        if (hint) hint.textContent = userName;
+        const avatar = entry.tile.querySelector(".video-fallback .fallback-avatar");
+        if (avatar) avatar.textContent = userName.slice(0, 1).toUpperCase();
+    }
+
     function dropTile(userId) {
         const entry = tiles.get(userId);
         if (!entry) return;
@@ -130,7 +156,10 @@
     function setTileVideoActive(userId, hasVideo) {
         const entry = tiles.get(userId);
         if (!entry) return;
-        entry.video.classList.toggle("is-hidden", !hasVideo);
+        // The stylesheet targets `.video-tile.is-hidden video`; putting the
+        // class on the <video> matched nothing, so a camera-off participant
+        // kept a frozen last frame behind the avatar.
+        entry.tile.classList.toggle("is-hidden", !hasVideo);
         let fallback = entry.tile.querySelector(".video-fallback");
         if (!fallback) {
             fallback = document.createElement("div");
@@ -196,19 +225,74 @@
     }
 
     function attachRemoteTrack(userId, event) {
-        const stream = event.streams[0];
-        const entry = ensureTile(userId, peers.get(userId)?.remoteName || "Participant");
-        entry.video.srcObject = stream;
-        const hasVideo = (stream.getVideoTracks() || []).some((track) => track.readyState === "live");
+        // `streams` can legitimately be empty for a peer negotiated through the
+        // transceiver path, so fall back to the track itself rather than
+        // dereferencing undefined and losing the tile entirely.
+        const stream = (event.streams && event.streams[0]) || null;
+        const media = stream || new MediaStream([event.track]);
+        const entry = ensureTile(userId, peers.get(userId)?._remoteName);
+        entry.video.srcObject = media;
+        const hasVideo = (media.getVideoTracks() || []).some((track) => track.readyState === "live");
         setTileVideoActive(userId, hasVideo);
         hideBanner();
     }
 
     // ── Peer connections ─────────────────────────────────────────────
+    function cancelPeerRebuild(remoteId) {
+        const timer = peerRebuildTimers.get(remoteId);
+        if (timer) {
+            window.clearTimeout(timer);
+            peerRebuildTimers.delete(remoteId);
+        }
+    }
+
+    // Tear the failed connection down and build a fresh one. Only the
+    // deterministic initiator (the lower user id) drives the rebuild, so both
+    // sides never negotiate at the same time and there is no SDP glare; the
+    // other side is recreated by the incoming offer handler.
+    function rebuildPeer(remoteId, name) {
+        if (callFinished) return;
+        closePeer(remoteId);
+        dropTile(remoteId);
+        peerRebuildAttempts.set(remoteId, (peerRebuildAttempts.get(remoteId) || 0) + 1);
+        const attempt = peerRebuildAttempts.get(remoteId);
+
+        if (attempt > MAX_PEER_REBUILD_ATTEMPTS) {
+            showBanner(`Could not reconnect to ${name}. They may have left.`, true);
+            return;
+        }
+
+        const delay = PEER_REBUILD_BACKOFF_MS[attempt - 1];
+        showBanner(`Reconnecting to ${name}…`, true);
+        const timer = window.setTimeout(() => {
+            peerRebuildTimers.delete(remoteId);
+            if (callFinished) return;
+            if (currentUserId < remoteId) {
+                ensurePeer(remoteId, name);
+            } else {
+                // Wait for the initiator's fresh offer; if it never comes,
+                // re-check shortly so the attempt counter can move on.
+                const watch = window.setTimeout(() => {
+                    peerRebuildTimers.delete(remoteId);
+                    if (!callFinished && !peers.has(remoteId)) rebuildPeer(remoteId, name);
+                }, delay);
+                peerRebuildTimers.set(remoteId, watch);
+            }
+        }, delay);
+        peerRebuildTimers.set(remoteId, timer);
+    }
+
     function ensurePeer(remoteId, remoteName) {
         if (remoteId === currentUserId) return null;
+        cancelPeerRebuild(remoteId);
         let pc = peers.get(remoteId);
-        if (pc) return pc;
+        if (pc) {
+            if (remoteName) {
+                pc._remoteName = remoteName;
+                applyTileName(remoteId, remoteName);
+            }
+            return pc;
+        }
 
         pc = new RTCPeerConnection({ iceServers });
         pc._remoteName = remoteName || "Participant";
@@ -236,21 +320,31 @@
         pc.onconnectionstatechange = () => {
             if (callFinished) return;
             if (pc.connectionState === "failed") {
+                const name = pc._remoteName;
                 if (pc._isInitiator && !pc._restarted) {
+                    // First response is a cheap ICE restart; many failures
+                    // (interface churn, brief Wi-Fi loss) recover from that.
                     pc._restarted = true;
                     try { pc.restartIce(); } catch (_) { /* older browsers */ }
-                } else if (!pc._restarted) {
-                    pc._restarted = true;
-                    // Give ICE a moment; a transient drop usually recovers itself.
-                    window.setTimeout(() => {
-                        if (peers.get(remoteId) === pc && ["failed", "closed"].includes(pc.connectionState)) {
-                            dropPeer(remoteId);
-                            showBanner(`Lost connection with ${pc._remoteName}. Reconnecting…`);
+                }
+                // Whether or not the restart was issued, schedule a real
+                // rebuild so a genuinely unreachable peer is re-dialled instead
+                // of being dropped for good.
+                if (!peerRebuildTimers.has(remoteId)) {
+                    const timer = window.setTimeout(() => {
+                        peerRebuildTimers.delete(remoteId);
+                        if (callFinished) return;
+                        if (peers.get(remoteId) === pc &&
+                            ["failed", "closed", "disconnected"].includes(pc.connectionState)) {
+                            rebuildPeer(remoteId, name);
                         }
-                    }, 2500);
+                    }, ICE_RECOVERY_GRACE_MS);
+                    peerRebuildTimers.set(remoteId, timer);
                 }
             } else if (pc.connectionState === "connected") {
                 pc._restarted = false;
+                peerRebuildAttempts.delete(remoteId);
+                cancelPeerRebuild(remoteId);
                 hideBanner();
             }
         };
@@ -266,10 +360,12 @@
     }
 
     function closePeer(remoteId) {
+        cancelPeerRebuild(remoteId);
         const pc = peers.get(remoteId);
         if (pc) {
             pc.ontrack = null;
             pc.onicecandidate = null;
+            pc.onconnectionstatechange = null;
             pc.close();
             peers.delete(remoteId);
         }
@@ -281,6 +377,7 @@
         closePeer(remoteId);
         dropTile(remoteId);
         mediaState.delete(remoteId);
+        peerRebuildAttempts.delete(remoteId);
         refreshParticipantCount();
         if (!silent) notice(`${name || "A participant"} left the room.`);
     }
@@ -289,6 +386,9 @@
         Array.from(peers.keys()).forEach((id) => closePeer(id));
         Array.from(tiles.keys()).forEach((id) => { if (id !== currentUserId) dropTile(id); });
         mediaState.clear();
+        peerRebuildAttempts.clear();
+        peerRebuildTimers.forEach((timer) => window.clearTimeout(timer));
+        peerRebuildTimers.clear();
         refreshParticipantCount();
     }
 
@@ -349,6 +449,8 @@
         setTileVideoActive(currentUserId, false);
         refreshParticipantCount();
         hideBanner();
+        // Remember user's choice to skip camera/microphone
+        localStorage.setItem("ivy_no_media", "true");
     }
 
     // ── Room lifecycle ───────────────────────────────────────────────
@@ -374,10 +476,13 @@
         stopScreenShare(true);
         dropAllPeers();
         dropTile(currentUserId);
+        refreshParticipantCount();
         if (localStream) {
             localStream.getTracks().forEach((track) => track.stop());
             localStream = null;
         }
+        // Reset the no-media preference so users can enable media next time
+        localStorage.removeItem("ivy_no_media");
         showBanner(message || "The call has ended.", false);
         endButton.disabled = true;
         if (redirectToConversation !== false && conversationId) {
@@ -441,7 +546,7 @@
                 // Show the shared screen in your own tile too.
                 const composite = new MediaStream([screenTrack]);
                 entry.video.srcObject = composite;
-                entry.video.classList.remove("is-mirrored");
+                entry.tile.classList.remove("is-mirrored");
                 setTileVideoActive(currentUserId, true);
             }
             broadcastMediaState();
@@ -468,7 +573,7 @@
         const entry = tiles.get(currentUserId);
         if (entry) {
             entry.video.srcObject = localStream;
-            entry.video.classList.add("is-mirrored");
+            entry.tile.classList.add("is-mirrored");
         }
         setTileVideoActive(currentUserId, camEnabled && Boolean(cameraTrack));
         if (!silent) broadcastMediaState();
@@ -561,6 +666,9 @@
         callFinished = true;
         socket.emit("leave_call", { room_id: roomId });
         if (localStream) localStream.getTracks().forEach((track) => track.stop());
+        // Match finishCall(): the skip-media choice is per-call, so leaving via
+        // the link must not leave the flag set for the next room.
+        localStorage.removeItem("ivy_no_media");
         window.setTimeout(() => { window.location.href = leaveLink.href; }, 180);
     }
     leaveLink.addEventListener("click", leaveWithoutEnding);
@@ -693,6 +801,8 @@
     });
 
     // ── Boot sequence ────────────────────────────────────────────────
+    // Check if user previously chose to continue without media
+    const noMedia = localStorage.getItem("ivy_no_media");
     fetch("/api/call/ice", { credentials: "same-origin" })
         .then((response) => (response.ok ? response.json() : null))
         .then((config) => {
@@ -702,6 +812,16 @@
         })
         .catch(() => {})
         .finally(() => {
+            // If the user previously chose to join without media, reuse the
+            // exact same path as the "Join without media" button. Doing it
+            // inline used to skip the self tile, leave mic/cam looking enabled
+            // (and broadcast as such to every peer), and miscount participants.
+            if (noMedia === "true") {
+                continueWithoutMedia();
+                joinRoom();
+                refreshParticipantCount();
+                return;
+            }
             startLocalMedia().then(() => {
                 joinRoom();
                 refreshParticipantCount();
