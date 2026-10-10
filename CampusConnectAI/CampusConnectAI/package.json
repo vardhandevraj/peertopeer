@@ -1,0 +1,10 @@
+{
+  "name": "campus-connect-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static asset build for Cloudflare Workers deployment",
+  "scripts": {
+    "build": "node scripts/build-static.js",
+    "deploy": "npm run build && npx wrangler deploy"
+  }
+}

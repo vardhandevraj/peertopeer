@@ -1,3 +1,8 @@
+<<<<<<< HEAD
+=======
+# Root copy for Vercel (builds from repo root). Keep in sync with
+# CampusConnectAI/requirements.txt used by Render.
+>>>>>>> 9870f6cb992046e5d9fd94c1fc73a5791bbcd59f
 Flask==3.0.3
 Flask-SocketIO==5.3.6
 requests==2.34.2

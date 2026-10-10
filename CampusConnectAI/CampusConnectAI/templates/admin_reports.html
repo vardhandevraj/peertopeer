@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Moderation{% endblock %}
+
+{% block content %}
+<section class="dashboard-page">
+    <section class="section-heading">
+        <h1>Admin Dashboard</h1>
+        <p>Review community reports and take action on content that violates IVY guidelines.</p>
+    </section>
+
+    <section class="admin-stats-grid">
+        {% for key, label, icon in [
+            ('PENDING', 'Pending review', 'inbox'),
+            ('UNDER_REVIEW', 'Under review', 'eye'),
+            ('RESOLVED', 'Resolved', 'check-circle'),
+            ('DISMISSED', 'Dismissed', 'circle-dashed')
+        ] %}
+            <a class="admin-stat-card {% if status_filter == key %}is-active{% endif %}"
+               href="{{ url_for('admin_reports', status=key) }}">
+                {% if icon == 'inbox' %}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+                {% elif icon == 'eye' %}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                {% elif icon == 'check-circle' %}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                {% else %}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12a10 10 0 1 1 10 10"/><path d="m2 12 4.5 4.5 1.5-2 2 2L12 12"/></svg>
+                {% endif %}
+                <div>
+                    <span>{{ label }}</span>
+                    <strong>{{ stats.get(key, 0) }}</strong>
+                </div>
+            </a>
+        {% endfor %}
+    </section>
+
+    <section class="dashboard-card">
+        <h2>{{ status_filter.replace('_', ' ').title() }} Reports ({{ reports|length }})</h2>
+        {% if reports %}
+            {% for report in reports %}
+                <a class="admin-report" href="{{ url_for('admin_report_detail', report_id=report.id) }}">
+                    <div class="admin-report-header">
+                        <span class="report-badge report-type-{{ report.target_type }}">{{ report.target_type }}</span>
+                        <strong>{{ report.reason }}</strong>
+                        <time datetime="{{ report.created_at.isoformat() }}">{{ report.created_at.strftime('%d %b %Y') }}</time>
+                    </div>
+                    <p class="muted-text">
+                        Reported by <strong>{{ report.reporter_name }}</strong>
+                        {% if report.target_type == 'user' %}
+                            against <strong>{{ report.target_name }}</strong> (#{{ report.target_id }})
+                        {% else %}
+                            on #{{ report.target_id }}
+                        {% endif %}
+                    </p>
+                    {% if report.details %}
+                        <p class="report-details">“{{ report.details }}”</p>
+                    {% endif %}
+                </a>
+            {% endfor %}
+        {% else %}
+            <p class="muted-text">No reports in this status.</p>
+        {% endif %}
+    </section>
+</section>
+{% endblock %}

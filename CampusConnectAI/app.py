@@ -251,6 +251,26 @@ _db_pool = None
 _DB_POOL_LOCK = threading.Lock()
 
 
+def _connection_is_alive(conn):
+    """Is the server-side connection still usable?
+
+    Supabase's pooler closes idle connections without notifying the client, so
+    psycopg2 can hand back a socket that still looks open locally yet dies with
+    "SSL SYSCALL error: EOF detected" on the next query. A cheap round-trip
+    catches that before the request touches the connection."""
+    try:
+        status = conn.get_transaction_status()
+        if status == psycopg2.extensions.TRANSACTION_STATUS_UNKNOWN:
+            return False
+        if status != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
+            conn.rollback()
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 def _pooled_connection():
     """Check a healthy connection out of the shared pool (created lazily)."""
     global _db_pool
@@ -261,15 +281,14 @@ def _pooled_connection():
                     minconn=1, maxconn=10, dsn=SUPABASE_DB_URL
                 )
     for _ in range(3):
-        conn = _db_pool.getconn()
-        if not conn.closed:
-            # A pooled connection may carry an open transaction from its last
-            # user (e.g. a read that was never committed). Roll it back so the
-            # next request starts clean; idle connections are reused as-is.
-            status = conn.get_transaction_status()
-            if status != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
-                conn.reset()
+        try:
+            conn = _db_pool.getconn()
+        except (Error, RuntimeError):
+            raise
+        if _connection_is_alive(conn):
             return _PooledConnection(conn)
+        # The pooled connection is stale (the server closed the socket), so
+        # discard it and let the pool open a fresh one on the next attempt.
         try:
             _db_pool.putconn(conn, close=True)
         except Exception:

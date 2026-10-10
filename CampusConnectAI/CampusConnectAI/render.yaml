@@ -1,0 +1,55 @@
+# Render Blueprint for IVY — Peer Learning Network
+# Create from the dashboard: dashboard.render.com/new/blueprint → paste this repo.
+# Gevent + Flask-SocketIO MUST run a single worker (-w 1); see Socket.IO docs.
+services:
+  - type: web
+    name: ivy
+    runtime: python
+    plan: free
+    region: oregon
+    rootDir: CampusConnectAI
+    autoDeploy: true
+    healthCheckPath: /
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 -b 0.0.0.0:$PORT app:app
+    disk:
+      - name: ivy-uploads
+        mountPath: /opt/render/project/src/CampusConnectAI/static/uploads
+        sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: TURN_SERVER
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_PASSWORD
+        sync: false
+      - key: STUN_SERVER
+        sync: false

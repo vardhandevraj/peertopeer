@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}Students{% endblock %}
+
+{% block content %}
+    <section class="dashboard-page students-page">
+        <section class="section-heading">
+            <div class="students-heading">
+                <div class="eyebrow">Peers</div>
+                <h1>Student Directory</h1>
+                <p>Connect with peers across departments and grow your academic network on IVY.</p>
+            </div>
+        </section>
+
+        <div class="students-toolbar" role="search" aria-label="Filter students">
+            <div class="students-search">
+                <i data-lucide="search" aria-hidden="true"></i>
+                <input type="search" id="studentSearch" placeholder="Search by name, department or year..." autocomplete="off">
+            </div>
+            <div class="students-filter">
+                <i data-lucide="filter" aria-hidden="true"></i>
+                <select id="departmentFilter" aria-label="Filter by department">
+                    <option value="">All departments</option>
+                    {% for dept in departments %}
+                        <option value="{{ dept|lower }}">{{ dept }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <section class="students-stats" aria-label="Directory summary">
+            <div class="stat-card">
+                <span class="stat-icon">
+                    <i data-lucide="users" aria-hidden="true"></i>
+                </span>
+                <div>
+                    <strong>{{ students|length }}</strong>
+                    <span>Peers in the directory</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <span class="stat-icon is-accent">
+                    <i data-lucide="inbox" aria-hidden="true"></i>
+                </span>
+                <div>
+                    <strong>{{ pending_requests|length }}</strong>
+                    <span>Pending connection requests</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <span class="stat-icon is-teal">
+                    <i data-lucide="sparkles" aria-hidden="true"></i>
+                </span>
+                <div>
+                    <strong>{{ departments|length }}</strong>
+                    <span>Departments represented</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="dashboard-grid">
+            <article class="dashboard-card students-card" data-student-card="requests">
+                <div class="students-card-head">
+                    <h2>Connection Requests</h2>
+                    <span class="count-badge">{{ pending_requests|length }}</span>
+                </div>
+
+                {% if pending_requests %}
+                    <div class="student-list">
+                        {% for request_item in pending_requests %}
+                            <div class="student-row" data-search="{{ ((request_item.full_name or '') ~ ' ' ~ (request_item.department or '') ~ ' ' ~ (request_item.study_year or '')) | lower }}">
+                                <div class="presence-cell">
+                                    <span class="avatar mini-avatar presence-avatar">{{ request_item.full_name[:1] }}</span>
+                                    <div class="student-meta">
+                                        <a class="student-name-link" href="{{ url_for('public_profile', user_id=request_item.user_id) }}">{{ request_item.full_name }}</a>
+                                        <p>
+                                            {{ request_item.department or 'Undeclared' }}
+                                            {%- if request_item.study_year %} · {{ request_item.study_year }}{% endif %}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div class="row-actions">
+                                    <form action="{{ url_for('respond_friend_request', friend_id=request_item.id, status='accepted') }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="small-action-button" type="submit">
+                                            <i data-lucide="check" aria-hidden="true"></i>
+                                            Accept
+                                        </button>
+                                    </form>
+                                    <form action="{{ url_for('respond_friend_request', friend_id=request_item.id, status='rejected') }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="small-action-button light-button" type="submit">
+                                            <i data-lucide="x" aria-hidden="true"></i>
+                                            Decline
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                    <div class="students-empty" data-empty="requests" hidden>
+                        <span class="students-empty-icon">
+                            <i data-lucide="inbox" aria-hidden="true"></i>
+                        </span>
+                        <p>No connection requests match your search.</p>
+                    </div>
+                {% else %}
+                    <div class="students-empty">
+                        <span class="students-empty-icon">
+                            <i data-lucide="inbox" aria-hidden="true"></i>
+                        </span>
+                        <p>No pending connection requests. When a peer sends you one, it will show up here.</p>
+                    </div>
+                {% endif %}
+            </article>
+
+            <article class="dashboard-card students-card" data-student-card="discover">
+                <div class="students-card-head">
+                    <h2>Discover Peers</h2>
+                    <span class="count-badge">{{ students|length }}</span>
+                </div>
+
+                {% if students %}
+                    <div class="student-list">
+                        {% for student in students %}
+                            <div class="student-row" data-search="{{ ((student.full_name or '') ~ ' ' ~ (student.department or '') ~ ' ' ~ (student.study_year or '')) | lower }}">
+                                <div class="presence-cell">
+                                    <span class="avatar mini-avatar presence-avatar {% if is_online(student.id) %}is-online{% endif %}">{{ student.full_name[:1] }}</span>
+                                    <div class="student-meta">
+                                        <a class="student-name-link" href="{{ url_for('public_profile', user_id=student.id) }}">{{ student.full_name }}</a>
+                                        <p>
+                                            {{ student.department or 'Undeclared' }}
+                                            {%- if student.study_year %} · {{ student.study_year }}{% endif %}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div class="row-actions">
+                                    <form action="{{ url_for('send_friend_request', receiver_id=student.id) }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="small-action-button" type="submit">
+                                            <i data-lucide="user-plus" aria-hidden="true"></i>
+                                            Connect
+                                        </button>
+                                    </form>
+                                    <form action="{{ url_for('follow', following_id=student.id) }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="small-action-button light-button" type="submit">
+                                            <i data-lucide="arrow-right" aria-hidden="true"></i>
+                                            Follow
+                                        </button>
+                                    </form>
+                                    <form action="{{ url_for('unfollow', following_id=student.id) }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="small-action-button light-button" type="submit">Unfollow</button>
+                                    </form>
+                                    <form action="{{ url_for('report_content') }}" method="POST" class="report-form">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="target_type" value="user">
+                                        <input type="hidden" name="target_id" value="{{ student.id }}">
+                                        <select class="students-report-select" name="reason" required>
+                                            <option value="" selected disabled>Report</option>
+                                            <option value="spam">Spam</option>
+                                            <option value="harassment">Harassment</option>
+                                            <option value="other">Other</option>
+                                        </select>
+                                        <button class="small-action-button light-button" type="submit">Submit</button>
+                                    </form>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                    <div class="students-empty" data-empty="discover" hidden>
+                        <span class="students-empty-icon">
+                            <i data-lucide="search" aria-hidden="true"></i>
+                        </span>
+                        <p>No peers match your search.</p>
+                    </div>
+                {% else %}
+                    <div class="students-empty">
+                        <span class="students-empty-icon">
+                            <i data-lucide="users" aria-hidden="true"></i>
+                        </span>
+                        <p>No other students are registered yet. Invite a classmate to join IVY.</p>
+                    </div>
+                {% endif %}
+            </article>
+        </section>
+    </section>
+{% endblock %}
+
+{% block scripts %}
+    <script>
+        (function () {
+            const searchInput = document.getElementById("studentSearch");
+            const deptFilter = document.getElementById("departmentFilter");
+            if (!searchInput || !deptFilter) return;
+
+            const applyFilter = () => {
+                const query = searchInput.value.trim().toLowerCase();
+                const dept = deptFilter.value.toLowerCase();
+
+                const anyActive = Boolean(query || dept);
+
+                document.querySelectorAll(".students-card").forEach((card) => {
+                    const rows = card.querySelectorAll(".student-row[data-search]");
+                    let visible = 0;
+
+                    rows.forEach((row) => {
+                        const hay = row.getAttribute("data-search") || "";
+                        const matchQuery = !query || hay.indexOf(query) !== -1;
+                        const matchDept = !dept || hay.indexOf(dept) !== -1;
+                        row.classList.toggle("is-hidden", !(matchQuery && matchDept));
+                        if (matchQuery && matchDept) visible += 1;
+                    });
+
+                    const empty = card.querySelector("[data-empty]");
+                    if (empty && rows.length > 0) {
+                        empty.hidden = !(anyActive && visible === 0);
+                    }
+                });
+            };
+
+            searchInput.addEventListener("input", applyFilter);
+            deptFilter.addEventListener("change", applyFilter);
+        })();
+    </script>
+{% endblock %}
