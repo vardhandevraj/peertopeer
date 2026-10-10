@@ -107,7 +107,7 @@
 /* The `hidden` attribute and the `hidden` IDL property are how every modal,
    overlay, and filtered-out row is shown and hidden. The browser's built-in
    `[hidden] { display: none }` rule has the lowest possible specificity, so a
-   single author rule such as `.permission-overlay { display: grid }` silently
+   single author rule such as `.mobile-bottom-nav { display: flex }` silently
    defeats it and leaves the element permanently on screen. This reset has to
    win against every component class, hence `!important`. */
 [hidden] { display: none !important; }
@@ -830,7 +830,6 @@ select {
 .profile-info-card,
 .profile-form,
 .resource-grid > .dashboard-card,
-.permission-card,
 .create-post-form,
 .feed-post,
 .stat-card,
@@ -2214,106 +2213,127 @@ details.row-menu[open] summary { background: var(--elev-3); color: var(--text-1)
     background: var(--elev-2); }
 
 .hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-    gap: 48px;
-    align-items: center;
+    position: relative;
+    overflow: hidden;
     max-width: 1140px;
     margin: 0 auto;
-    padding: clamp(56px, 9vh, 96px) clamp(18px, 4vw, 48px) 64px;
+    padding: clamp(72px, 12vh, 132px) clamp(18px, 4vw, 48px) 72px;
+    text-align: center;
 }
 
-.hero-content { animation: ivy-rise 0.5s var(--ease) both; }
+.hero-orbs {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(60px);
+    opacity: 0.5;
+    animation: orb-drift 14s var(--ease) infinite;
+}
+
+.orb-a {
+    width: 340px;
+    height: 340px;
+    top: -90px;
+    left: 4%;
+    background: radial-gradient(circle at 30% 30%, var(--accent), transparent 70%);
+}
+
+.orb-b {
+    width: 300px;
+    height: 300px;
+    top: 30px;
+    right: 3%;
+    background: radial-gradient(circle at 30% 30%, var(--teal), transparent 70%);
+    animation-delay: -5s;
+}
+
+.orb-c {
+    width: 260px;
+    height: 260px;
+    bottom: -130px;
+    left: 42%;
+    background: radial-gradient(circle at 30% 30%, var(--sky), transparent 70%);
+    animation-delay: -9s;
+}
+
+@keyframes orb-drift {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(0, -22px, 0) scale(1.08); }
+}
+
+.hero-content {
+    position: relative;
+    z-index: 1;
+    max-width: 760px;
+    margin: 0 auto;
+    animation: ivy-rise 0.5s var(--ease) both;
+}
 
 .hero h1 {
-    font-size: clamp(var(--fs-display), 5.4vw, 62px);
-    line-height: 1.05;
-    margin: 10px 0 18px;
+    font-size: clamp(var(--fs-display), 6vw, 68px);
+    line-height: 1.03;
+    letter-spacing: -0.02em;
+    margin: 10px auto 18px;
+    max-width: 15ch;
 }
 
-.hero-text { color: var(--text-2); font-size: var(--fs-lg); max-width: 520px; }
+.hero-text { color: var(--text-2); font-size: var(--fs-xl); max-width: 560px; margin: 0 auto; }
 
-.hero-actions { display: flex; gap: 12px; margin-top: 32px; flex-wrap: wrap; }
-
-.hero-preview { animation: ivy-rise 0.5s var(--ease) 0.08s both; }
-
-.preview-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    border: 1px solid var(--border);
-    border-bottom: none;
-    border-radius: 20px 20px 0 0;
-    background: var(--elev-1);
-}
-
-.preview-label { font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
-.preview-header h2 { font-size: var(--fs-lg); margin-top: 2px; }
-
-.status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--success);
-    box-shadow: 0 0 0 5px rgba(52, 211, 153, 0.18);
-    animation: ivy-pulse 2s ease infinite;
-}
-
-@keyframes ivy-pulse {
-    0%, 100% { box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.18); }
-    50% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0.08); }
-}
-
-.post-card {
-    display: flex;
-    gap: 14px;
-    padding: 18px 20px;
-    border: 1px solid var(--border);
-    background: var(--elev-2);
-    box-shadow: var(--shadow-sm);
-}
-
-.post-card h3 { font-size: var(--fs-md); margin-bottom: 5px; }
-.post-card p { color: var(--text-2); font-size: var(--fs-md); }
-
-.post-actions { display: flex; gap: 16px; margin-top: 10px; color: var(--text-3); font-size: var(--fs-xs); }
-
-.active-card { border-color: rgba(124, 108, 255, 0.35); box-shadow: var(--shadow-md); }
-.post-card:last-child { border-radius: 0 0 20px 20px; }
-
-.ai-reply {
-    margin-top: 10px;
-    padding: 10px 12px;
-    border-radius: 10px;
-    font-size: var(--fs-sm);
-    color: var(--teal);
-    background: rgba(45, 212, 191, 0.08);
-    border: 1px solid rgba(45, 212, 191, 0.2);
-}
+.hero-actions { display: flex; gap: 12px; margin-top: 36px; justify-content: center; flex-wrap: wrap; }
 
 .feature-strip {
     max-width: 1140px;
     margin: 0 auto;
     padding: 40px clamp(18px, 4vw, 48px) 80px;
+    text-align: center;
 }
+
+.feature-intro { max-width: 620px; margin: 0 auto; }
 
 .feature-strip h2 { font-size: var(--fs-3xl); margin-bottom: 8px; }
 .feature-strip p { color: var(--text-2); }
 
 .feature-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
-    margin-top: 28px;
+    margin-top: 32px;
+    text-align: left;
 }
 
 .feature-grid article {
-    padding: 24px;
+    padding: 26px;
     border-radius: var(--radius-lg);
     background: var(--elev-2);
     border: 1px solid var(--border);
+    transition: transform var(--dur) var(--ease), border-color var(--dur) ease, box-shadow var(--dur) ease;
 }
+
+.feature-grid article:hover {
+    transform: translateY(-3px);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-md);
+}
+
+.feature-icon {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    margin-bottom: 16px;
+    border-radius: 13px;
+    color: var(--accent-strong);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.feature-icon svg { width: 22px; height: 22px; }
 
 .feature-grid h3 { font-size: var(--fs-lg); margin-bottom: 6px; }
 .feature-grid p { color: var(--text-2); font-size: var(--fs-md); }
@@ -3130,41 +3150,6 @@ body.call-room-body {
     box-shadow: var(--shadow-md);
 }
 
-/* Permission overlay */
-.permission-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 20;
-    display: grid;
-    place-items: center;
-    background: color-mix(in srgb, var(--bg) 78%, transparent);
-    backdrop-filter: blur(8px);
-}
-
-.permission-card {
-    width: min(480px, calc(100% - 32px));
-    padding: 32px;
-    text-align: center;
-}
-
-.permission-icon { font-size: var(--fs-4xl); margin-bottom: 10px; }
-
-.permission-card h2 { font-size: var(--fs-2xl); margin-bottom: 8px; }
-.permission-card p { color: var(--text-2); font-size: var(--fs-md); }
-
-.permission-actions {
-    display: flex;
-    justify-content: center;
-    gap: 12px;
-    margin-top: 22px;
-    flex-wrap: wrap;
-}
-
-.retry-permission,
-.call-control { min-height: 44px; padding: 0 22px; border-radius: var(--radius-pill); font-weight: 600; font-size: var(--fs-md); border: none; color: #fff; background: linear-gradient(135deg, var(--accent), #4f46e5); }
-
-.join-anyway { background: transparent; color: var(--text-2); border: 1px solid var(--border-strong); }
-
 /* Room chat */
 .call-chat {
     display: flex;
@@ -3247,8 +3232,6 @@ body.call-room-body {
 
 .call-control svg { width: 20px; height: 20px; }
 
-.call-control.ghost { width: auto; padding: 0 20px; border-radius: var(--radius-pill); }
-
 .call-control.is-off { background: rgba(244, 63, 94, 0.9); }
 
 .call-control.ivy-button { background: linear-gradient(135deg, var(--teal), #0d9488); box-shadow: 0 4px 14px -4px var(--teal-glow); }
@@ -3269,7 +3252,7 @@ body.call-room-body {
     :root { --shell-pad-y: 28px; }
 
     .messages-workspace { grid-template-columns: minmax(0, 320px) minmax(0, 1fr); }
-    .hero { grid-template-columns: minmax(0, 1fr); gap: 40px; }
+    .feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
     .dashboard-grid { gap: 16px; }
     .resource-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }

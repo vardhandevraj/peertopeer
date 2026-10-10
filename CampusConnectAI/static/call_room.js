@@ -14,10 +14,6 @@
     const videoGrid = document.getElementById("videoGrid");
     const stageBanner = document.getElementById("stageBanner");
     const participantCount = document.getElementById("participantCount");
-    const permissionOverlay = document.getElementById("permissionOverlay");
-    const permissionMessage = document.getElementById("permissionMessage");
-    const retryMediaBtn = document.getElementById("retryMediaBtn");
-    const joinAnywayBtn = document.getElementById("joinAnywayBtn");
     const chatPanel = document.getElementById("callChatPanel");
     const chatCloseBtn = document.getElementById("chatCloseBtn");
     const chatToggleBtn = document.getElementById("toggleChatBtn");
@@ -393,18 +389,7 @@
     }
 
     // ── Local media ──────────────────────────────────────────────────
-    function mediaPermissionErrorText(error) {
-        if (error && (error.name === "NotAllowedError" || error.name === "SecurityError")) {
-            return "Permission was blocked. Allow camera and microphone access in your browser settings, or continue without media.";
-        }
-        if (error && error.name === "NotFoundError") {
-            return "No camera or microphone was found. You can continue without media.";
-        }
-        return "Camera and microphone could not be started. You can continue without media.";
-    }
-
     async function startLocalMedia() {
-        permissionOverlay.hidden = true;
         try {
             localStream = await navigator.mediaDevices.getUserMedia({
                 video: { width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -424,21 +409,15 @@
             // Mid-call retries must reach peers that already exist.
             attachLocalTracksToPeers();
         } catch (error) {
-            console.warn("getUserMedia failed:", error);
-            localStream = null;
-            cameraTrack = null;
-            mediaReady = false;
-            permissionMessage.textContent = mediaPermissionErrorText(error);
-            permissionOverlay.hidden = false;
-            ensureTile(currentUserId, currentUserLabel);
-            setTileVideoActive(currentUserId, false);
+            console.warn("getUserMedia failed — continuing without media:", error);
+            continueWithoutMedia();
+            showBanner("Camera and microphone are off. You can re-enable them from your browser settings.", true);
         }
         refreshParticipantCount();
     }
 
     function continueWithoutMedia() {
         mediaReady = false;
-        permissionOverlay.hidden = true;
         micEnabled = false;
         camEnabled = false;
         micButton.classList.add("is-off");
@@ -675,9 +654,6 @@
     window.addEventListener("pagehide", () => {
         if (!callFinished) socket.emit("leave_call", { room_id: roomId });
     });
-
-    retryMediaBtn.addEventListener("click", () => startLocalMedia().then(broadcastMediaState)); // startLocalMedia attaches tracks itself
-    joinAnywayBtn.addEventListener("click", continueWithoutMedia);
 
     // ── Socket wiring ────────────────────────────────────────────────
     // One shared app socket: reuse the one script.js created, or create it

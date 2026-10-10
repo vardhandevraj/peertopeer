@@ -65,6 +65,11 @@ const indexHtml = `<!DOCTYPE html>
 
   <main>
     <section class="hero">
+      <div class="hero-orbs" aria-hidden="true">
+        <span class="orb orb-a"></span>
+        <span class="orb orb-b"></span>
+        <span class="orb orb-c"></span>
+      </div>
       <div class="hero-content">
         <div class="eyebrow">The Modern Student Network</div>
         <h1>Intelligent collaboration for higher learning.</h1>
@@ -74,50 +79,28 @@ const indexHtml = `<!DOCTYPE html>
           <a class="secondary-button" href="#login">Sign In</a>
         </div>
       </div>
-
-      <div class="hero-preview" aria-label="IVY Feed preview">
-        <div class="preview-header">
-          <div>
-            <p class="preview-label">Live Activity</p>
-            <h2>Course Discussions</h2>
-          </div>
-          <span class="status-dot"></span>
-        </div>
-        <article class="post-card">
-          <div class="avatar">AK</div>
-          <div>
-            <h3>Aarav Sharma · Data Structures</h3>
-            <p>Comprehensive PDF breakdown covering graph traversal, trees, and dynamic programming patterns.</p>
-            <div class="post-actions">
-              <span>24 Upvotes</span>
-              <span>8 Discussions</span>
-            </div>
-          </div>
-        </article>
-        <article class="post-card active-card">
-          <div class="avatar dark">NP</div>
-          <div>
-            <h3>Nisha Patel · Computer Science</h3>
-            <p>Can someone explain tail call optimization with an intuitive memory stack visualization?</p>
-            <div class="ai-reply">Peer reply: see the worked example with stack frame diagrams below.</div>
-          </div>
-        </article>
-      </div>
     </section>
 
     <section class="feature-strip" id="features">
-      <div>
+      <div class="feature-intro">
         <h2>Engineered for academic momentum</h2>
         <p>An integrated ecosystem designed to streamline knowledge sharing and peer collaboration.</p>
       </div>
       <div class="feature-grid">
         <article>
+          <span class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
           <h3>Resource Exchange</h3>
           <p>Share verified lecture notes, code snippets, and research materials in real time.</p>
         </article>
         <article>
+          <span class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
           <h3>Peer Network</h3>
           <p>Connect with peers across departments, form study cohorts, and exchange direct messages.</p>
+        </article>
+        <article>
+          <span class="feature-icon"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3z"/></svg></span>
+          <h3>AI Learning Assistant</h3>
+          <p>Ask IVY for explanations, summaries, and study help right inside your study rooms.</p>
         </article>
       </div>
     </section>
