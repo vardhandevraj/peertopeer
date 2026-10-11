@@ -4,6 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="description" content="{% block description %}IVY is a peer learning network for students - share study resources, find study partners, and collaborate with an AI study assistant.{% endblock %}">
+    <meta name="robots" content="{% block robots %}noindex, nofollow{% endblock %}">
+    <link rel="canonical" href="{{ request.url }}">
+    <meta name="theme-color" content="#0e1116">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="IVY">
+    <meta property="og:title" content="{{ self.title() }} | IVY">
+    <meta property="og:description" content="Share course materials, discover study partners, and collaborate in real time on IVY.">
+    <meta property="og:image" content="{{ url_for('static', filename='images/og-image.png', _external=True) }}">
+    <meta property="og:url" content="{{ request.url }}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{ self.title() }} | IVY">
+    <meta name="twitter:description" content="Share course materials, discover study partners, and collaborate in real time on IVY.">
+    <meta name="twitter:image" content="{{ url_for('static', filename='images/og-image.png', _external=True) }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='images/favicon-16.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/apple-touch-icon.png') }}">
+    <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
     <title>{% block title %}IVY{% endblock %} | IVY</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script>
@@ -12,9 +30,10 @@
             document.documentElement.setAttribute("data-theme", savedTheme);
         })();
     </script>
-    <script src="{{ url_for('static', filename='icons.js') }}"></script>
+    <script src="{{ url_for('static', filename='icons.js') }}" defer></script>
 </head>
 <body>
+    <a class="skip-link" href="#mainContent">Skip to main content</a>
     <div class="app-shell">
         <aside class="sidebar" id="appSidebar">
             <a class="sidebar-brand" href="{{ url_for('feed') }}">
@@ -77,7 +96,7 @@
             </div>
         </aside>
 
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     {% for category, message in messages %}
@@ -87,6 +106,15 @@
             {% endwith %}
 
             {% block content %}{% endblock %}
+
+            <footer class="site-footer">
+                <nav aria-label="Legal">
+                    <a href="{{ url_for('privacy') }}">Privacy</a>
+                    <a href="{{ url_for('terms') }}">Terms</a>
+                    <a href="{{ url_for('index') }}">About</a>
+                </nav>
+                <span>&copy; {{ current_year() }} IVY</span>
+            </footer>
         </main>
     </div>
 

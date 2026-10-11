@@ -1,0 +1,47 @@
+{% set code = status|default(500) %}
+{% set title_text = heading|default("Something went wrong") %}
+{% set body_text = message|default("An unexpected error interrupted that request. It has been logged - please try again in a moment.") %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>{{ code }} - {{ title_text }} | IVY</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/apple-touch-icon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('index') }}">
+            <img class="brand-logo" src="{{ url_for('static', filename='images/logo.webp') }}" alt="IVY home">
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+            <a href="{{ url_for('index') }}">Home</a>
+            <a href="{{ url_for('login') }}">Sign In</a>
+        </nav>
+    </header>
+
+    <main class="auth-page">
+        <section class="auth-panel" role="alert">
+            <div class="auth-intro">
+                <div class="eyebrow">Error {{ code }}</div>
+                <h1>{{ title_text }}</h1>
+                <p>{{ body_text }}</p>
+            </div>
+            <div class="auth-stack">
+                <a class="submit-button" href="{{ url_for('index') }}">Back to IVY</a>
+            </div>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

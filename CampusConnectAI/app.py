@@ -2,10 +2,13 @@ import os
 import re
 import io
 import json
+import time
 import smtplib
 import secrets
+import functools
 import threading
 import subprocess
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from email.mime.text import MIMEText
@@ -53,6 +56,24 @@ if not _secret_key:
     )
 app.secret_key = _secret_key
 
+# Harden the session cookie. HttpOnly keeps JavaScript from reading it and
+# SameSite=Lax blocks it from being attached to cross-site POSTs (a CSRF
+# backstop). Secure is only enabled on the HTTPS deployment: Render sets
+# RENDER=true, and a Secure cookie would otherwise be dropped by the browser
+# when running `python app.py` over plain http://localhost.
+_on_https = (
+    os.environ.get("RENDER", "").lower() in ("true", "1")
+    or os.environ.get("SESSION_COOKIE_SECURE", "").lower() in ("true", "1")
+)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=_on_https,
+    REMEMBER_COOKIE_HTTPONLY=True,
+    REMEMBER_COOKIE_SAMESITE="Lax",
+    REMEMBER_COOKIE_SECURE=_on_https,
+)
+
 # Trust Render's proxy so X-Forwarded-Proto/Host are used, which keeps
 # url_for(_external=True) building https:// URLs (needed for Google OAuth's
 # redirect_uri to match the registered https URL).
@@ -62,6 +83,70 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 # gevent backend (with gunicorn's gevent worker) so websockets work; unlike
 # eventlet's monkey patching it does not break SSLContext.minimum_version.
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
+
+# ── Security headers ───────────────────────────────────────────────────────
+# Every response carries a defensive header set. The Content-Security-Policy
+# allows 'unsafe-inline' for scripts/styles because the templates rely on small
+# inline theme/behaviour snippets; it still blocks any script, style, or frame
+# from a host that is not allowlisted. The only external code IVY loads is the
+# Socket.IO client and DOMPurify, so those two CDNs are the sole script origins.
+_CSP = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'self'; "
+    "img-src 'self' data: blob: https:; "
+    "media-src 'self' blob: https:; "
+    "font-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdn.jsdelivr.net; "
+    "connect-src 'self' ws: wss: https://cdn.socket.io; "
+)
+
+
+@app.after_request
+def apply_security_headers(response):
+    response.headers.setdefault("Content-Security-Policy", _CSP)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(self), microphone=(self), geolocation=(), payment=()",
+    )
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    if _on_https:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
+@app.before_request
+def force_https():
+    """Redirect plain-http requests to https on the production deployment."""
+    if _on_https and not request.is_secure and not request.path.startswith("/socket.io/"):
+        return redirect(request.url.replace("http://", "https://", 1), code=301)
+
+
+def safe_redirect(target, fallback_endpoint="index"):
+    """Redirect to `target` only when it stays on this host.
+
+    request.referrer is attacker-controllable, so a bare
+    redirect(request.referrer) can bounce a signed-in student to an external
+    phishing page. Anything off-host (or with a non-http scheme) falls back to
+    a known-good internal endpoint instead.
+    """
+    fallback = url_for(fallback_endpoint)
+    if not target:
+        return redirect(fallback)
+    parts = urllib.parse.urlsplit(target)
+    if parts.scheme and parts.scheme not in ("http", "https"):
+        return redirect(fallback)
+    if parts.netloc and parts.netloc != request.host:
+        return redirect(fallback)
+    return redirect(target)
 
 # ── Localised timestamps ──────────────────────────────────────────────────
 # The database stores created_at as UTC (Postgres CURRENT_TIMESTAMP), so a
@@ -80,6 +165,7 @@ def campus_time(dt):
 
 
 app.jinja_env.globals["campus_time"] = campus_time
+app.jinja_env.globals["current_year"] = lambda: datetime.now().year
 
 # Google OAuth is handled with plain Flask + curl (no Authlib). Authlib's
 # authorize_redirect/authorize_access_token caused "maximum recursion depth
@@ -147,6 +233,11 @@ def _http_curl(url, method="GET", data=None, headers=None, timeout=20):
             )
         code = -1
     return code, body
+
+# Cap the size of any single incoming request body so an oversized upload
+# cannot exhaust the worker's memory ("request body too large" DoS). 25 MB is
+# generous for notes, slides, and PDFs; images are downscaled on upload.
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
 # Uploaded files are saved inside static/uploads.
 app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
@@ -534,12 +625,150 @@ def protect_from_csrf():
             if request.headers.get("X-Requested-With") == "fetch" or request.is_json:
                 return {"ok": False, "error": "Security token missing or expired."}, 400
             flash("Your session expired. Please try again.")
-            return redirect(request.referrer or url_for("index"))
+            return safe_redirect(request.referrer, "index")
 
 
 @app.context_processor
 def inject_csrf_token():
     return {"csrf_token": generate_csrf_token}
+
+
+# ── Rate limiting ───────────────────────────────────────────────────────────
+# IVY runs as a single gunicorn worker (rooms and call signaling live in
+# process memory), so a small process-local sliding window is enough and keeps
+# us free of another dependency. Each subject keeps its own list of hit times;
+# expired timestamps are pruned lazily, so memory scales with the number of
+# distinct clients active inside the longest window.
+_RATE_HITS = {}
+_RATE_LOCK = threading.Lock()
+
+
+def rate_subject(key):
+    """Resolve a limiter bucket subject from the request/session context."""
+    if key == "user":
+        try:
+            if "user_id" in session:
+                return f"user:{session['user_id']}"
+        except RuntimeError:
+            # Outside a request/socket context (e.g. a background task); fall
+            # back to the client address rather than failing the request.
+            pass
+    try:
+        return f"ip:{request.remote_addr or 'unknown'}"
+    except RuntimeError:
+        return "ip:unknown"
+
+
+def rate_allow(scope, limit, window_seconds, key="ip"):
+    """Record a hit and return True, or False once `limit` is reached."""
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    subject = f"{scope}:{rate_subject(key)}"
+    with _RATE_LOCK:
+        hits = _RATE_HITS.get(subject)
+        if hits is None:
+            hits = deque()
+            _RATE_HITS[subject] = hits
+        else:
+            while hits and hits[0] < cutoff:
+                hits.popleft()
+        if len(hits) >= limit:
+            return False
+        hits.append(now)
+        return True
+
+
+def rate_limit(scope, limit, window_seconds, key="ip"):
+    """Decorator form for HTTP views: over-limit callers get a 429 / redirect.
+
+    Only state-changing methods consume the budget, so merely viewing a form
+    (GET) never counts against the attempt limit.
+    """
+    def decorator(view):
+        @functools.wraps(view)
+        def wrapped(*args, **kwargs):
+            if request.method in ("POST", "PUT", "PATCH", "DELETE") and not rate_allow(
+                scope, limit, window_seconds, key=key
+            ):
+                if request.is_json or request.headers.get("X-Requested-With") == "fetch":
+                    return {
+                        "ok": False,
+                        "error": "Too many attempts. Please wait a moment and try again.",
+                    }, 429
+                flash("Too many attempts. Please wait a moment and try again.")
+                return safe_redirect(request.referrer, "login")
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+# AI calls hit a metered third-party API, so cap how often one student can ask.
+AI_RATE_LIMIT = 30        # requests
+AI_RATE_WINDOW = 600      # per 10 minutes
+
+
+def ai_rate_ok():
+    """True when the current student may make another IVY request."""
+    return rate_allow("ai", AI_RATE_LIMIT, AI_RATE_WINDOW, key="user")
+
+
+# ── Safe error reporting & bot mitigation ──────────────────────────────────
+def flash_db_error(error):
+    """Log a database error server-side and flash a generic message.
+
+    Raw psycopg2 error strings can name tables, columns, and constraints, which
+    helps an attacker map the schema. The detail goes to the server log only.
+    """
+    print(f"Database error: {error}")
+    flash("Something went wrong on our side. Please try again.")
+
+
+# Public forms get a signed timestamp plus an invisible honeypot field. Real
+# students take at least a moment to read and fill a form; scripted spam tends
+# to submit instantly and blindly fills every input, including the trap.
+BOT_MIN_SECONDS = 2
+BOT_MAX_SECONDS = 21600  # 6 hours: generous enough for a form left open
+_BOT_SIGNER = None
+
+
+def _bot_serializer():
+    global _BOT_SIGNER
+    if _BOT_SIGNER is None:
+        from itsdangerous import URLSafeTimedSerializer
+
+        _BOT_SIGNER = URLSafeTimedSerializer(app.secret_key, salt="ivy-form")
+    return _BOT_SIGNER
+
+
+def bot_field():
+    """Hidden inputs to drop inside a public form (honeypot + timestamp)."""
+    from markupsafe import Markup
+
+    token = _bot_serializer().dumps(int(time.time()))
+    return Markup(
+        '<div aria-hidden="true" style="position:absolute;left:-9999px;'
+        'width:1px;height:1px;overflow:hidden">'
+        '<label for="ivy_hp">Leave this field empty</label>'
+        '<input type="text" id="ivy_hp" name="ivy_hp" tabindex="-1" '
+        'autocomplete="off"></div>'
+        f'<input type="hidden" name="ivy_ts" value="{token}">'
+    )
+
+
+def bot_valid():
+    """True when a public form submission looks like a real human."""
+    if (request.form.get("ivy_hp") or "").strip():
+        return False
+    token = request.form.get("ivy_ts") or ""
+    try:
+        issued = int(_bot_serializer().loads(token, max_age=BOT_MAX_SECONDS))
+    except Exception:  # noqa: B902 - bad/expired/missing token
+        return False
+    return (time.time() - issued) >= BOT_MIN_SECONDS
+
+
+app.jinja_env.globals["bot_field"] = bot_field
+
 
 
 # ── Email delivery (Brevo API, then SMTP, then console fallback) ───────────
@@ -848,10 +1077,87 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/favicon.ico")
+def favicon():
+    """Serve the icon browsers request automatically from the site root."""
+    return app.send_static_file("images/favicon.ico")
+
+
+@app.route("/privacy")
+def privacy():
+    return render_template("privacy.html")
+
+
+@app.route("/terms")
+def terms():
+    return render_template("terms.html")
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    """Crawl rules: index only the public pages, keep the private app out."""
+    lines = [
+        "User-agent: *",
+        "Allow: /$",
+        "Allow: /login",
+        "Allow: /register",
+        "Allow: /forgot-password",
+        "Allow: /privacy",
+        "Allow: /terms",
+        "Disallow: /feed",
+        "Disallow: /profile",
+        "Disallow: /students",
+        "Disallow: /messages",
+        "Disallow: /notifications",
+        "Disallow: /resources",
+        "Disallow: /search",
+        "Disallow: /ai",
+        "Disallow: /call",
+        "Disallow: /admin",
+        "Disallow: /api",
+        "Disallow: /conversations",
+        "Disallow: /create-post",
+        "Disallow: /edit-post",
+        "Disallow: /delete-post",
+        "Disallow: /delete-account",
+        "Disallow: /report",
+        "Sitemap: " + url_for("sitemap_xml", _external=True),
+    ]
+    return "\n".join(lines) + "\n", 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    """Only the pages a signed-out crawler can actually reach."""
+    public_endpoints = [
+        "index",
+        "login",
+        "register",
+        "forgot_password",
+        "privacy",
+        "terms",
+    ]
+    urls = "\n".join(
+        f"  <url><loc>{url_for(endpoint, _external=True)}</loc></url>"
+        for endpoint in public_endpoints
+    )
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{urls}\n"
+        "</urlset>\n"
+    )
+    return body, 200, {"Content-Type": "application/xml; charset=utf-8"}
+
+
 @app.route("/register", methods=["GET", "POST"])
+@rate_limit("register", 5, 1800)
 def register():
     """Show the registration form and save a new student account."""
     if request.method == "POST":
+        if not bot_valid():
+            flash("Something went wrong. Please try again.")
+            return redirect(url_for("register"))
         full_name = (request.form.get("full_name") or "").strip()
         email = (request.form.get("email") or "").strip()
         department = request.form.get("department")
@@ -907,7 +1213,7 @@ def register():
             return redirect(url_for("login"))
 
         except Error as error:
-            flash(f"Database error: {error}")
+            flash_db_error(error)
             return redirect(url_for("register"))
 
         finally:
@@ -920,9 +1226,13 @@ def register():
 
 
 @app.route("/login", methods=["GET", "POST"])
+@rate_limit("login", 10, 300)
 def login():
     """Show the login form and check student credentials."""
     if request.method == "POST":
+        if not bot_valid():
+            flash("Something went wrong. Please try again.")
+            return redirect(url_for("login"))
         email = (request.form.get("email") or "").strip()
         password = request.form.get("password") or ""
 
@@ -944,7 +1254,7 @@ def login():
             user = cursor.fetchone()
 
             if not user:
-                flash("No account found with this email. Please register first.")
+                flash("Invalid email or password.")
                 return redirect(url_for("login"))
 
             if not user["password"]:
@@ -952,6 +1262,9 @@ def login():
                 return redirect(url_for("login"))
 
             if check_password_hash(user["password"], password):
+                # Rotate the session on privilege change to prevent fixation:
+                # any cookie contents set before sign-in are discarded.
+                session.clear()
                 session["user_id"] = user["id"]
                 session["full_name"] = user["full_name"]
                 session["email"] = user["email"]
@@ -964,11 +1277,11 @@ def login():
                 flash("Login successful. Welcome back!")
                 return redirect(url_for("feed"))
 
-            flash("Invalid email or password. Please try again.")
+            flash("Invalid email or password.")
             return redirect(url_for("login"))
 
         except Error as error:
-            flash(f"Database error: {error}")
+            flash_db_error(error)
             return redirect(url_for("login"))
 
         finally:
@@ -991,9 +1304,13 @@ def logout():
 
 # ── Password reset ──────────────────────────────────────────────────────────
 @app.route("/forgot-password", methods=["GET", "POST"])
+@rate_limit("forgot", 5, 1800)
 def forgot_password():
     """Show the reset-request form and email a reset link."""
     if request.method == "POST":
+        if not bot_valid():
+            flash("Something went wrong. Please try again.")
+            return redirect(url_for("forgot_password"))
         email = request.form.get("email")
         try:
             connection = get_db_connection()
@@ -1022,6 +1339,7 @@ def forgot_password():
 
 
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
+@rate_limit("reset", 10, 1800)
 def reset_password(token):
     """Let a student choose a new password with a valid reset token.
 
@@ -1073,7 +1391,7 @@ def reset_password(token):
             flash("Your password has been updated. Please sign in with your new password.")
             return redirect(url_for("login"))
         except Error as error:
-            flash(f"Database error: {error}")
+            flash_db_error(error)
             return redirect(url_for("forgot_password"))
         finally:
             if "connection" in locals() and not connection.closed:
@@ -1111,7 +1429,7 @@ def delete_account():
         cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
         connection.commit()
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
         return redirect(url_for("profile"))
     finally:
         if "connection" in locals() and not connection.closed:
@@ -1143,13 +1461,13 @@ def report_content():
     valid_types = {"post", "comment", "user", "resource"}
     if target_type not in valid_types or not reason:
         flash("A valid report type and reason are required.")
-        return redirect(request.referrer or url_for("feed"))
+        return safe_redirect(request.referrer, "feed")
 
     try:
         target_id = int(request.form.get("target_id"))
     except (TypeError, ValueError):
         flash("Invalid report target.")
-        return redirect(request.referrer or url_for("feed"))
+        return safe_redirect(request.referrer, "feed")
 
     if target_type in ("post", "comment", "user", "resource"):
         try:
@@ -1159,7 +1477,7 @@ def report_content():
             cursor.execute(f"SELECT 1 FROM {table} WHERE id = %s", (target_id,))
             if not cursor.fetchone():
                 flash("The content you reported no longer exists.")
-                return redirect(request.referrer or url_for("feed"))
+                return safe_redirect(request.referrer, "feed")
             cursor.execute(
                 """
                 INSERT INTO reports (reporter_id, target_type, target_id, reason, details)
@@ -1170,14 +1488,14 @@ def report_content():
             connection.commit()
             flash("Thanks for reporting. Our moderators will review it.")
         except Error as error:
-            flash(f"Database error: {error}")
+            flash_db_error(error)
         finally:
             if "connection" in locals() and not connection.closed:
                 if "cursor" in locals():
                     cursor.close()
                 connection.close()
 
-    return redirect(request.referrer or url_for("feed"))
+    return safe_redirect(request.referrer, "feed")
 
 
 def admin_required():
@@ -1227,7 +1545,7 @@ def admin_reports():
         )
         report_list = cursor.fetchall()
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
     finally:
         if "connection" in locals() and not connection.closed:
             if "cursor" in locals():
@@ -1300,7 +1618,7 @@ def admin_report_detail(report_id):
         )
         open_reports = cursor.fetchall()
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
         return redirect(url_for("admin_reports"))
     finally:
         if "connection" in locals() and not connection.closed:
@@ -1344,7 +1662,7 @@ def admin_resolve_report(report_id):
         connection.commit()
         flash("Report updated.")
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
     finally:
         if "connection" in locals() and not connection.closed:
             if "cursor" in locals():
@@ -1383,7 +1701,7 @@ def admin_delete_target(target_type, target_id):
         connection.commit()
         flash("Reported content removed and reports marked resolved.")
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
     finally:
         if "connection" in locals() and not connection.closed:
             if "cursor" in locals():
@@ -1407,6 +1725,12 @@ def ai_study_plan():
 
     if len(subject) > 200 or len(weeks) > 10 or len(hours) > 10:
         return {"ok": False, "error": "Please keep your details short."}, 400
+
+    if not ai_rate_ok():
+        return {
+            "ok": False,
+            "error": "You're asking IVY very quickly. Please wait a moment and try again.",
+        }, 429
 
     user_request = f"Subject: {subject}, weeks until exam: {weeks}, hours available: {hours}"
     system_prompt = (
@@ -1638,6 +1962,8 @@ def google_callback():
 
         connection.commit()
 
+        # Rotate the session on sign-in to prevent fixation.
+        session.clear()
         session["user_id"] = user["id"]
         session["full_name"] = user["full_name"]
         session["email"] = user["email"]
@@ -1749,7 +2075,7 @@ def feed():
                 comments_by_post.setdefault(comment["post_id"], []).append(comment)
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -1810,7 +2136,7 @@ def create_post():
         flash("Your post was shared.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -1862,7 +2188,7 @@ def edit_post(post_id):
             return redirect(url_for("feed"))
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
         return redirect(url_for("feed"))
 
     finally:
@@ -1895,7 +2221,7 @@ def delete_post(post_id):
         flash("Post deleted.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -1961,7 +2287,7 @@ def like_post(post_id):
         connection.commit()
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
         # `connection` is bound inside the try, and a psycopg2 PoolError (a
         # subclass of Error) can be raised by get_db_connection() itself, so it
         # may still be None here.
@@ -2019,7 +2345,7 @@ def add_comment(post_id):
         flash("Comment added.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2051,7 +2377,7 @@ def delete_comment(comment_id):
         flash("Comment deleted.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2161,7 +2487,7 @@ def profile():
         stats["friends"] = cursor.fetchone()["total"]
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
         profile_user = None
 
     finally:
@@ -2295,7 +2621,7 @@ def public_profile(user_id):
                 comments_by_post.setdefault(comment["post_id"], []).append(comment)
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
         profile_user = None
 
     finally:
@@ -2349,7 +2675,7 @@ def students():
         pending_requests = cursor.fetchall()
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2424,7 +2750,7 @@ def send_friend_request(receiver_id):
         flash("Friend request sent.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2472,7 +2798,7 @@ def respond_friend_request(friend_id, status):
         flash(f"Friend request {status}.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2509,7 +2835,7 @@ def remove_friend(friend_id):
         flash("Friend removed.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2550,7 +2876,7 @@ def follow(following_id):
         flash("You are now following this student.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2582,7 +2908,7 @@ def unfollow(following_id):
         flash("You unfollowed this student.")
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2769,7 +3095,7 @@ def messages(conversation_id=None):
         conversations = cursor.fetchall()
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -2843,7 +3169,7 @@ def new_conversation():
         return redirect(url_for("messages", conversation_id=conv_id))
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
     finally:
         if "connection" in locals() and not connection.closed:
             if "cursor" in locals():
@@ -2904,7 +3230,7 @@ def create_group_conversation():
         flash("Group created. Start the conversation whenever you are ready.")
         return redirect(url_for("messages", conversation_id=new_conversation_id))
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
     finally:
         if "connection" in locals() and not connection.closed:
             if "cursor" in locals():
@@ -2948,7 +3274,7 @@ def add_group_members(conversation_id):
         connection.commit()
         flash("Selected students were added to the group.")
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
     finally:
         if "connection" in locals() and not connection.closed:
             if "cursor" in locals():
@@ -3067,6 +3393,13 @@ Latest request from {sender_name}:
 
 def process_ivy_mention(conversation_id, message_text, sender_name):
     """Use the existing Groq helper with a small, ordered conversation window."""
+    if not ai_rate_ok():
+        save_and_emit_ivy_message(
+            conversation_id,
+            "You're asking IVY very quickly. Please wait a moment and try again.",
+        )
+        return
+
     prompt = build_ivy_prompt(recent_conversation_transcript(conversation_id), message_text, sender_name)
 
     try:
@@ -3414,7 +3747,7 @@ def start_call_room(conversation_id):
         return redirect(url_for("call_room", room_id=room_id))
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
         return redirect(url_for("messages", conversation_id=conversation_id))
     finally:
         if cursor:
@@ -3836,6 +4169,14 @@ def save_and_emit_call_ivy_message(room_id, conversation_id, message_text):
 
 def process_ivy_room_mention(room_id, conversation_id, message_text, sender_name):
     """Answer @ivy inside a learning room using the shared IVY implementation."""
+    if not ai_rate_ok():
+        save_and_emit_call_ivy_message(
+            room_id,
+            conversation_id,
+            "You're asking IVY very quickly. Please wait a moment and try again.",
+        )
+        return
+
     prompt = build_ivy_prompt(recent_conversation_transcript(conversation_id), message_text, sender_name)
 
     try:
@@ -3955,7 +4296,7 @@ def notifications():
         connection.commit()
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -3995,7 +4336,7 @@ def delete_notification(notification_id):
         connection.commit()
         flash("Notification deleted.")
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
     finally:
         if "connection" in locals() and not connection.closed:
             if "cursor" in locals():
@@ -4019,7 +4360,7 @@ def clear_all_notifications():
         connection.commit()
         flash("All notifications cleared.")
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
     finally:
         if "connection" in locals() and not connection.closed:
             if "cursor" in locals():
@@ -4074,7 +4415,7 @@ def resources():
             flash("Resource shared.")
 
         except Error as error:
-            flash(f"Database error: {error}")
+            flash_db_error(error)
 
         finally:
             if "connection" in locals() and not connection.closed:
@@ -4102,7 +4443,7 @@ def resources():
         resource_list = cursor.fetchall()
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -4173,7 +4514,7 @@ def search():
             resources_result = cursor.fetchall()
 
         except Error as error:
-            flash(f"Database error: {error}")
+            flash_db_error(error)
 
         finally:
             if "connection" in locals() and not connection.closed:
@@ -4406,7 +4747,7 @@ def render_ai_assistant_page(conversation_id=None):
         connection.close()
 
     except Error as error:
-        flash(f"Database error: {error}")
+        flash_db_error(error)
 
     finally:
         if "connection" in locals() and not connection.closed:
@@ -4590,6 +4931,12 @@ def send_ai_message(conversation_id):
     if len(message_text) > MAX_CHAT_MESSAGE_LENGTH:
         return {"ok": False, "error": "Message is too long."}, 400
 
+    if not ai_rate_ok():
+        return {
+            "ok": False,
+            "error": "You're asking IVY very quickly. Please wait a moment and try again.",
+        }, 429
+
     connection = None
     cursor = None
     try:
@@ -4714,6 +5061,30 @@ def send_ai_message(conversation_id):
             cursor.close()
         if connection and not connection.closed:
             connection.close()
+
+
+# ── Friendly error pages ───────────────────────────────────────────────────
+@app.errorhandler(404)
+def not_found(error):
+    return render_template("error.html", status=404), 404
+
+
+@app.errorhandler(413)
+def request_too_large(error):
+    return (
+        render_template(
+            "error.html",
+            status=413,
+            heading="That file is too large",
+            message="Uploads are limited to 25 MB. Please attach a smaller file.",
+        ),
+        413,
+    )
+
+
+@app.errorhandler(500)
+def server_error(error):
+    return render_template("error.html", status=500), 500
 
 
 # This block runs only when we start the file directly with:

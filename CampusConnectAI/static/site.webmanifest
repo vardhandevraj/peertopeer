@@ -1,0 +1,13 @@
+{
+  "name": "IVY - Peer Learning Network",
+  "short_name": "IVY",
+  "description": "Share course materials, discover study partners, and collaborate in real time.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0e1116",
+  "theme_color": "#0e1116",
+  "icons": [
+    { "src": "/static/images/favicon-32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "/static/images/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

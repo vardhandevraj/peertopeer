@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="The terms that govern your use of the IVY peer learning network.">
+    <link rel="canonical" href="{{ url_for('terms', _external=True) }}">
+    <title>Terms of Service | IVY</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='images/favicon-32.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/apple-touch-icon.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('index') }}">
+            <img class="brand-logo" src="{{ url_for('static', filename='images/logo.webp') }}" alt="IVY home">
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+            <a href="{{ url_for('index') }}">Home</a>
+            <a href="{{ url_for('privacy') }}">Privacy</a>
+            <a href="{{ url_for('login') }}">Sign In</a>
+        </nav>
+    </header>
+
+    <main class="legal-page">
+        <article class="legal-doc">
+            <h1>Terms of Service</h1>
+            <p class="legal-updated">Last updated: <strong>October 11, 2026</strong></p>
+
+            <p class="legal-note">
+                This is a plain-language summary of the rules for using IVY. It
+                should be reviewed by a qualified adviser before launch.
+            </p>
+
+            <h2>1. Acceptance</h2>
+            <p>
+                By creating an account or using IVY, you agree to these terms and
+                to our <a href="{{ url_for('privacy') }}">Privacy Policy</a>. If you
+                do not agree, do not use the service.
+            </p>
+
+            <h2>2. Who may use IVY</h2>
+            <p>
+                You must be at least <strong>13</strong> years old and
+                able to form a binding agreement. You are responsible for the
+                accuracy of the information in your account and for keeping your
+                password confidential.
+            </p>
+
+            <h2>3. Acceptable use</h2>
+            <p>You agree not to:</p>
+            <ul>
+                <li>post content that is unlawful, harassing, hateful, or infringing;</li>
+                <li>upload malware or attempt to breach or overload the service;</li>
+                <li>impersonate others or misrepresent your affiliation;</li>
+                <li>access other students' accounts or private data without permission;</li>
+                <li>use automated tools to scrape or spam the network.</li>
+            </ul>
+
+            <h2>4. Your content</h2>
+            <p>
+                You keep ownership of the content you post. You grant IVY a
+                non-exclusive licence to host, display, and deliver that content
+                as part of operating the service. You are responsible for making
+                sure you have the right to share what you upload, including
+                course materials that may be subject to copyright.
+            </p>
+
+            <h2>5. AI assistant</h2>
+            <p>
+                The IVY assistant generates responses automatically and may be
+                inaccurate or incomplete. It is a study aid, not professional
+                advice, and you should verify important information independently.
+            </p>
+
+            <h2>6. Moderation and termination</h2>
+            <p>
+                We may remove content or suspend or terminate accounts that
+                violate these terms or harm other users or the service. You may
+                delete your own account at any time from your profile.
+            </p>
+
+            <h2>7. Disclaimers</h2>
+            <p>
+                IVY is provided "as is" and "as available", without warranties of
+                any kind to the extent permitted by law. We do not guarantee
+                uninterrupted or error-free operation.
+            </p>
+
+            <h2>8. Limitation of liability</h2>
+            <p>
+                To the maximum extent permitted by law, IVY and its operator are
+                not liable for indirect, incidental, or consequential damages
+                arising from your use of the service.
+            </p>
+
+            <h2>9. Governing law</h2>
+            <p>
+                These terms are governed by the laws of
+                <strong>India</strong>, subject to final legal review, without
+                regard to conflict-of-law rules.
+            </p>
+
+            <h2>10. Contact</h2>
+            <p>
+                Questions about these terms? Email
+                <strong>campusconnectaivy@gmail.com</strong>.
+            </p>
+
+            <p class="legal-back"><a href="{{ url_for('index') }}">Back to IVY</a></p>
+        </article>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
