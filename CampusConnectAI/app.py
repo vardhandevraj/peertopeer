@@ -74,6 +74,10 @@ app.config.update(
     REMEMBER_COOKIE_SECURE=_on_https,
 )
 
+# In local development, re-read templates on every request so edits show up
+# without restarting the server. Production keeps the cache for speed.
+app.config["TEMPLATES_AUTO_RELOAD"] = not _on_https
+
 # Trust Render's proxy so X-Forwarded-Proto/Host are used, which keeps
 # url_for(_external=True) building https:// URLs (needed for Google OAuth's
 # redirect_uri to match the registered https URL).
@@ -245,8 +249,9 @@ app.config["ALLOWED_EXTENSIONS"] = {"png", "jpg", "jpeg", "gif", "pdf", "ppt", "
 app.config["IMAGE_EXTENSIONS"] = {"png", "jpg", "jpeg", "gif"}
 # Long cache headers for static assets (CSS, JS, images) so browsers and the
 # CDN stop re-downloading them on every page load. Files are rarely changed;
-# edit one and force-refresh or add ?v= to bust the cache.
-app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 2592000
+# edit one and force-refresh or add ?v= to bust the cache. Local development
+# disables caching so edits show up on a normal refresh.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 2592000 if _on_https else 0
 
 # MySQL connection settings.
 # You can change these values or set environment variables before running the app.
