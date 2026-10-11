@@ -92,6 +92,13 @@
                         <i data-lucide="log-out"></i>
                     </a>
                 </div>
+
+                <nav class="sidebar-legal" aria-label="Legal">
+                    <a href="{{ url_for('privacy') }}">Privacy</a>
+                    <a href="{{ url_for('terms') }}">Terms</a>
+                    <a href="{{ url_for('index') }}">About</a>
+                    <span class="sidebar-legal-copy">&copy; {{ current_year() }} IVY</span>
+                </nav>
             </div>
         </aside>
 
@@ -108,20 +115,12 @@
                 {% block content %}{% endblock %}
             </div>
 
-            <footer class="site-footer">
-                <div class="site-footer-brand">
-                    <strong>IVY</strong>
-                    <span>Peer Learning Network</span>
-                </div>
-                <div class="site-footer-meta">
-                    <nav class="site-footer-nav" aria-label="Legal">
-                        <a href="{{ url_for('privacy') }}">Privacy</a>
-                        <a href="{{ url_for('terms') }}">Terms</a>
-                        <a href="{{ url_for('index') }}">About</a>
-                    </nav>
-                    <span class="site-footer-copy">&copy; {{ current_year() }} IVY</span>
-                </div>
-            </footer>
+            <nav class="sidebar-legal mobile-legal" aria-label="Legal">
+                <a href="{{ url_for('privacy') }}">Privacy</a>
+                <a href="{{ url_for('terms') }}">Terms</a>
+                <a href="{{ url_for('index') }}">About</a>
+                <span class="sidebar-legal-copy">&copy; {{ current_year() }} IVY</span>
+            </nav>
         </main>
     </div>
 

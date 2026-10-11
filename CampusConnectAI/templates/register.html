@@ -130,6 +130,13 @@
                     <textarea id="bio" name="bio" rows="3" placeholder="Brief summary of your academic interests and projects..."></textarea>
                 </div>
 
+                <div class="form-row terms-row">
+                    <label for="accept_terms">
+                        <input type="checkbox" id="accept_terms" name="accept_terms" value="yes" required>
+                        <span>I agree to the <a href="{{ url_for('terms') }}" target="_blank" rel="noopener">Terms &amp; Conditions</a> and <a href="{{ url_for('privacy') }}" target="_blank" rel="noopener">Privacy Policy</a>.</span>
+                    </label>
+                </div>
+
                 <button class="submit-button" type="submit">Create Account</button>
 
                 <p class="form-note">

@@ -1163,6 +1163,9 @@ def register():
         if not bot_valid():
             flash("Something went wrong. Please try again.")
             return redirect(url_for("register"))
+        if request.form.get("accept_terms") != "yes":
+            flash("Please accept the Terms & Conditions to create an account.")
+            return redirect(url_for("register"))
         full_name = (request.form.get("full_name") or "").strip()
         email = (request.form.get("email") or "").strip()
         department = request.form.get("department")
