@@ -1,22 +1,41 @@
-# Render Blueprint for the IVY (CampusConnectAI) Flask backend.
-# The app is stateless on disk: uploads go to Supabase Storage, so the
-# ephemeral free-tier filesystem is fine. Env values are set via `sync: false`
-# and must be filled in the Render Dashboard after the service is created.
+# Render Blueprint for IVY (CampusConnectAI) — Flask + Flask-SocketIO.
+#
+# Runs the app as a single, always-on web process (instead of Vercel's
+# serverless functions), so the Postgres connection pool stays warm and
+# Socket.IO WebSockets (chat + WebRTC signaling) work natively.
+#
+# Deploy: Render Dashboard -> New + -> Blueprint -> select this repo.
+# Render reads THIS file at the repo root, builds inside `rootDir`, then
+# prompts you for every `sync: false` value (copy them from CampusConnectAI/.env).
 services:
   - type: web
     name: ivy-backend
     runtime: python
+    # `singapore` is Render's region closest to the Supabase database
+    # (aws-0-ap-south-1 / Mumbai). Co-locating them removes the
+    # cross-continent round-trip that made every query slow.
+    region: singapore
+    # `free` spins down after ~15 min idle and cold-starts on the next hit.
+    # Change to `starter` for a truly always-on instance with no cold start.
     plan: free
     rootDir: CampusConnectAI
-    region: oregon
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --workers 1 --worker-class gevent --bind 0.0.0.0:$PORT
-    healthCheckPath: /
     autoDeploy: true
+    healthCheckPath: /
+    buildCommand: pip install -r requirements.txt
+    # GeventWebSocketWorker gives Flask-SocketIO native WebSocket support.
+    # MUST stay at a single worker: rooms and call signaling live in process
+    # memory, so extra workers would not see each other's clients.
+    startCommand: >-
+      gunicorn app:app
+      --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker
+      --workers 1
+      --timeout 120
+      --keep-alive 5
+      --bind 0.0.0.0:$PORT
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
       - key: SECRET_KEY
-        sync: false
-      - key: BREVO_API_KEY
         sync: false
       - key: SUPABASE_URL
         sync: false
@@ -39,6 +58,8 @@ services:
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: BREVO_API_KEY
         sync: false
       - key: SMTP_HOST
         sync: false
