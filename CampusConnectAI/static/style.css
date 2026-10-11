@@ -3214,8 +3214,8 @@ body.call-room-body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    padding: 14px;
+    gap: 14px;
+    padding: 14px 16px;
     border-top: 1px solid var(--border);
     background: var(--elev-1);
 }
@@ -3225,24 +3225,69 @@ body.call-room-body {
     width: 52px;
     height: 52px;
     padding: 0;
+    flex-shrink: 0;
     display: grid;
     place-items: center;
+    border: 1px solid var(--border-strong);
     border-radius: 50%;
+    color: var(--text-1);
+    background: var(--elev-2);
+    box-shadow: var(--shadow-sm);
+    transition: background var(--dur) ease, border-color var(--dur) ease,
+                color var(--dur) ease, transform var(--dur) var(--ease),
+                box-shadow var(--dur) ease;
+}
+
+.call-control:hover {
+    background: var(--elev-3);
+    border-color: var(--border-strong);
+    color: var(--text-1);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.call-control:active { transform: translateY(0) scale(0.94); }
+
+.call-control:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .call-control svg { width: 20px; height: 20px; }
 
-.call-control.is-off { background: rgba(244, 63, 94, 0.9); }
-
-.call-control.ivy-button { background: linear-gradient(135deg, var(--teal), #0d9488); box-shadow: 0 4px 14px -4px var(--teal-glow); }
-
-.call-control.danger.hangup {
-    background: var(--danger);
-    box-shadow: 0 4px 18px -4px rgba(244, 63, 94, 0.6);
-    border-radius: 50%;
+.call-control.is-off {
+    color: #fff;
+    background: linear-gradient(135deg, var(--danger), #e11d48);
+    border-color: transparent;
+    box-shadow: 0 6px 16px -6px rgba(244, 63, 94, 0.55);
 }
 
-.call-chat { display: flex; }
+.call-control.is-off:hover {
+    background: linear-gradient(135deg, var(--danger), #e11d48);
+    box-shadow: 0 8px 20px -6px rgba(244, 63, 94, 0.7);
+}
+
+.call-control.ivy-button {
+    color: #fff;
+    background: linear-gradient(135deg, var(--teal), #0d9488);
+    border-color: transparent;
+    box-shadow: 0 4px 14px -4px var(--teal-glow);
+}
+
+.call-control.ivy-button:hover { box-shadow: 0 8px 20px -6px var(--teal-glow); }
+
+.call-control.danger.hangup {
+    width: 58px;
+    height: 58px;
+    color: #fff;
+    background: linear-gradient(135deg, var(--danger), #e11d48);
+    border-color: transparent;
+    box-shadow: 0 6px 20px -6px rgba(244, 63, 94, 0.6);
+}
+
+.call-control.danger.hangup:hover {
+    box-shadow: 0 10px 26px -6px rgba(244, 63, 94, 0.8);
+}
 
 /* ── Responsive ───────────────────────────────────────────── */
 /* Tablet — the shell narrows before the mobile nav takes over, so page
