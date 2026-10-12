@@ -12,4 +12,5 @@ gevent==26.9.0
 gevent-websocket
 gunicorn==22.0.0
 Pillow
+pypdf
 certifi

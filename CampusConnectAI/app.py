@@ -5,9 +5,12 @@ import json
 import time
 import smtplib
 import secrets
+import base64
+import zipfile
 import functools
 import threading
 import subprocess
+import xml.etree.ElementTree as ET
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -22,6 +25,7 @@ from psycopg2.extras import RealDictCursor
 from supabase import create_client, Client
 from PIL import Image
 import urllib.parse
+from pypdf import PdfReader
 from flask import Flask, flash, redirect, render_template, request, session, url_for, g
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from psycopg2 import Error
@@ -4723,6 +4727,285 @@ Student message:
 """.strip()
 
 
+# ---------------------------------------------------------------------------
+# AI attachments — images and shared documents (PDF / DOCX / TXT).
+# All files are validated in-memory and never written to disk or long-term
+# storage. Images become data URLs for a vision-capable model; documents get
+# their text extracted (chunked) and embedded in the stored message so follow-up
+# turns still carry the material's context.
+# ---------------------------------------------------------------------------
+AI_MAX_ATTACHMENTS = 4
+AI_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+AI_MAX_ATTACHMENT_TOTAL_BYTES = 15 * 1024 * 1024
+AI_MAX_DOCUMENT_CHARS = 8000
+AI_IMAGE_MAX_SIDE = 1568
+AI_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
+AI_DOCUMENT_EXTENSIONS = {"pdf", "docx", "txt"}
+AI_ALLOWED_ATTACHMENT_EXTENSIONS = AI_IMAGE_EXTENSIONS | AI_DOCUMENT_EXTENSIONS
+AI_VISION_MODELS = [
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+]
+
+# Everything after this marker inside an ai_messages.content row is reference
+# material a student attached. It is forwarded to the model as context but is
+# stripped from every human-visible rendering (chat history and sidebar).
+AI_ATTACHMENT_MARKER = "\n\n-----IVY ATTACHMENT CONTEXT-----\n"
+
+_IMAGE_FORMATS = {"png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "gif": "GIF", "webp": "WEBP"}
+
+
+def _magic_matches(extension, raw):
+    """Cheap content check so a renamed/forged file is rejected before use."""
+    if extension in ("png", "jpg", "jpeg", "pdf"):
+        magic = {
+            "png": b"\x89PNG\r\n\x1a\n",
+            "jpg": b"\xff\xd8\xff",
+            "jpeg": b"\xff\xd8\xff",
+            "pdf": b"%PDF-",
+        }[extension]
+        return raw.startswith(magic)
+    if extension == "gif":
+        return raw[:4] in (b"GIF87a", b"GIF89a")
+    if extension == "webp":
+        return len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP"
+    if extension == "docx":
+        return raw.startswith(b"PK\x03\x04")
+    if extension == "txt":
+        return True
+    return False
+
+
+def ai_visible_content(content):
+    """Strip the attachment-context section before content reaches the UI."""
+    if not content:
+        return content
+    try:
+        return content.split(AI_ATTACHMENT_MARKER, 1)[0]
+    except (AttributeError, TypeError):
+        return content
+
+
+def ai_attachment_names(content):
+    """Return the attached file names stored inside a message, for display."""
+    if not content or AI_ATTACHMENT_MARKER not in content:
+        return []
+    names = []
+    for line in content.split(AI_ATTACHMENT_MARKER, 1)[1].splitlines():
+        match = re.match(r"^(Image|Document): (.+)$", line)
+        if match:
+            names.append(match.group(2))
+    return names
+
+
+app.jinja_env.filters["ai_visible"] = ai_visible_content
+app.jinja_env.filters["ai_attachments"] = ai_attachment_names
+
+
+def preprocess_ai_image(raw, name, extension):
+    """Validate an image and return a downscaled JPEG data URL for a vision model.
+
+    Verifies the declared format matches the real bytes, guards against
+    decompression-bomb dimensions, then re-encodes to a bounded-size JPEG that
+    is a sane payload for a multimodal chat request.
+    """
+    try:
+        with Image.open(io.BytesIO(raw)) as probe:
+            probe.verify()
+        with Image.open(io.BytesIO(raw)) as probe:
+            if probe.format != _IMAGE_FORMATS[extension]:
+                raise ValueError(
+                    f"'{name}' is a {probe.format or 'different'} file, not a {extension.upper()} image."
+                )
+            width, height = probe.size
+        if width * height > 60_000_000:
+            raise ValueError(f"'{name}' is too large (over 60 megapixels).")
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError(f"'{name}' is not a valid image.")
+
+    img = Image.open(io.BytesIO(raw)).convert("RGB")
+    if max(img.size) > AI_IMAGE_MAX_SIDE:
+        img.thumbnail((AI_IMAGE_MAX_SIDE, AI_IMAGE_MAX_SIDE), Image.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=85, optimize=True)
+    if buffer.tell() > 5 * 1024 * 1024:
+        raise ValueError(f"'{name}' is still too large after processing.")
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def extract_pdf_text(raw, name):
+    try:
+        reader = PdfReader(io.BytesIO(raw))
+        if reader.is_encrypted:
+            raise ValueError(f"'{name}' is password protected and cannot be read.")
+        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError(f"'{name}' could not be read as a PDF.")
+
+
+def extract_docx_text(raw, name):
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            if "word/document.xml" not in archive.namelist():
+                raise ValueError(f"'{name}' is not a valid .docx document.")
+            root = ET.fromstring(archive.read("word/document.xml"))
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError(f"'{name}' could not be read as a .docx document.")
+
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    paragraphs = []
+    for paragraph in root.iter(ns + "p"):
+        paragraphs.append("".join(node.text or "" for node in paragraph.iter(ns + "t")))
+    if not paragraphs:
+        raise ValueError(f"'{name}' contains no readable text.")
+    return "\n".join(paragraphs)
+
+
+def extract_latin_text(raw):
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1", errors="replace")
+
+
+def select_relevant_excerpt(text, question, max_chars=AI_MAX_DOCUMENT_CHARS):
+    """Keep the most relevant parts of a long document instead of a blind cut.
+
+    Splits the text into overlapping chunks and ranks them by how many of the
+    student's own terms each chunk contains, returning the highest-scoring
+    chunks up to the context budget. Short documents pass through unchanged.
+    """
+    text = re.sub(r"[ \t]+", " ", text or "")
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(text) <= max_chars:
+        return text
+
+    chunk_size = 1800
+    overlap = 200
+    step = chunk_size - overlap
+    chunks = [text[start:start + chunk_size] for start in range(0, len(text), step)]
+    chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
+
+    query_terms = set(re.findall(r"[A-Za-z0-9]{4,}", (question or "").lower()))
+    if query_terms:
+        chunks.sort(key=lambda chunk: sum(chunk.lower().count(term) for term in query_terms), reverse=True)
+
+    picked = []
+    used = 0
+    truncation_note = "\n\n[Document was longer than the chat context limit; shown excerpts only.]"
+    budget = max(0, max_chars - len(truncation_note))
+    for chunk in chunks:
+        if used + len(chunk) <= budget:
+            picked.append(chunk)
+            used += len(chunk)
+
+    return "\n\n".join(picked) + truncation_note
+
+
+def process_ai_attachments(files, question):
+    """Validate and convert submitted files into (image_urls, context_block).
+
+    Raises ValueError with a user-facing message on any invalid input. Images
+    come back as data URLs for the vision request; document text is extracted,
+    chunked and returned as a context block that is embedded in the stored
+    message so later turns in the same chat can still reference it.
+    """
+    if not files:
+        return [], ""
+    if len(files) > AI_MAX_ATTACHMENTS:
+        raise ValueError(f"You can attach at most {AI_MAX_ATTACHMENTS} files per message.")
+
+    images = []
+    document_parts = []
+    file_notes = []
+    total_bytes = 0
+
+    for uploaded in files:
+        original = uploaded.filename or ""
+        display_name = secure_filename(original)
+        ext = (original.rsplit(".", 1)[1] if "." in original else "").lower()
+        if not original or not display_name or ext not in AI_ALLOWED_ATTACHMENT_EXTENSIONS:
+            raise ValueError(f"'{original[:60]}' is not an allowed file type.")
+
+        raw = uploaded.read()
+        if not raw:
+            raise ValueError(f"'{display_name}' is empty and cannot be attached.")
+        if len(raw) > AI_MAX_ATTACHMENT_BYTES:
+            raise ValueError(
+                f"'{display_name}' is larger than the {AI_MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB limit."
+            )
+        total_bytes += len(raw)
+        if total_bytes > AI_MAX_ATTACHMENT_TOTAL_BYTES:
+            raise ValueError("Attachments together are larger than the 15 MB limit.")
+        if not _magic_matches(ext, raw):
+            raise ValueError(f"'{display_name}' is named as a {ext.upper()} file but its contents do not match.")
+
+        if ext in AI_IMAGE_EXTENSIONS:
+            images.append(preprocess_ai_image(raw, display_name, ext))
+            file_notes.append(f"Image: {display_name}")
+        else:
+            if ext == "pdf":
+                text = extract_pdf_text(raw, display_name)
+            elif ext == "docx":
+                text = extract_docx_text(raw, display_name)
+            else:
+                text = extract_latin_text(raw)
+            document_parts.append(f"File: {display_name}\n{select_relevant_excerpt(text, question)}")
+            file_notes.append(f"Document: {display_name}")
+
+    context_block = "\n\n".join(file_notes)
+    if document_parts:
+        context_block += "\n\n" + "\n\n".join(document_parts)
+    return images, context_block
+
+
+def generate_ai_vision_response(client, prompt, images):
+    """Answer about attached images through a vision-capable Groq model."""
+    models_to_try = []
+    configured = os.environ.get("GROQ_VISION_MODEL") or os.environ.get("GROQ_MODEL")
+    if configured:
+        models_to_try.append(configured)
+    for model_name in AI_VISION_MODELS:
+        if model_name not in models_to_try:
+            models_to_try.append(model_name)
+
+    content = [{"type": "text", "text": prompt}]
+    for image_url in images:
+        content.append({"type": "image_url", "image_url": {"url": image_url}})
+
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are IVY, an intelligent, modern academic companion "
+                            "for higher education students. A student has attached "
+                            "images to their question; analyse what you can actually "
+                            "see and answer directly and accurately. Never invent "
+                            "content that is not visible in the images."
+                        ),
+                    },
+                    {"role": "user", "content": content},
+                ],
+            )
+            return response.choices[0].message.content
+        except Exception as error:
+            last_error = error
+            continue
+
+    raise RuntimeError(f"All Groq vision models failed. Last error: {last_error}")
+
+
 def render_ai_assistant_page(conversation_id=None):
     """Render the multi-chat workspace with one selected conversation."""
     conversations = []
@@ -4751,6 +5034,11 @@ def render_ai_assistant_page(conversation_id=None):
             chat_messages = cursor.fetchall()
 
         conversations = fetch_ai_sidebar_conversations(cursor, session["user_id"])
+        for conversation in conversations:
+            if conversation.get("last_message"):
+                # Attached-document context is stored inside the message for
+                # model context but must not leak into the sidebar preview.
+                conversation["last_message"] = ai_visible_content(conversation["last_message"])
         cursor.close()
         connection.close()
 
@@ -4928,16 +5216,42 @@ def delete_ai_conversation(conversation_id):
 
 @app.route("/ai/conversations/<int:conversation_id>/message", methods=["POST"])
 def send_ai_message(conversation_id):
-    """Persist a student message and answer it with IVY using only this thread."""
+    """Persist a student message and answer it with IVY using only this thread.
+
+    Accepts either plain JSON ({content}) or multipart/form-data with a
+    `content` field and repeated `attachments` file fields. Attachments are
+    validated in-memory: images go to a vision-capable model, document text is
+    extracted and stored with the message so later turns can reference it.
+    """
     if not login_required():
         return {"ok": False, "error": "Please log in again."}, 401
 
-    payload = request.get_json(silent=True) or {}
-    message_text = str(payload.get("content") or "").strip()
-    if not message_text:
-        return {"ok": False, "error": "Message cannot be empty."}, 400
+    if request.is_json:
+        payload = request.get_json(silent=True) or {}
+        message_text = str(payload.get("content") or "").strip()
+        attachment_files = []
+    else:
+        message_text = str(request.form.get("content") or "").strip()
+        attachment_files = request.files.getlist("attachments")
+
     if len(message_text) > MAX_CHAT_MESSAGE_LENGTH:
         return {"ok": False, "error": "Message is too long."}, 400
+
+    try:
+        image_urls, attachment_block = process_ai_attachments(attachment_files, message_text)
+    except ValueError as error:
+        return {"ok": False, "error": str(error)}, 400
+
+    has_attachments = bool(image_urls or attachment_block)
+    if not message_text and not has_attachments:
+        return {"ok": False, "error": "Message cannot be empty."}, 400
+    if not message_text:
+        message_text = "Please analyze the attached file(s)."
+    visible_text = message_text
+
+    stored_content = message_text
+    if has_attachments:
+        stored_content = f"{message_text}{AI_ATTACHMENT_MARKER}{attachment_block}"
 
     if not ai_rate_ok():
         return {
@@ -4968,14 +5282,14 @@ def send_ai_message(conversation_id):
             VALUES (%s, 'user', %s)
             RETURNING id, created_at
             """,
-            (conversation_id, message_text),
+            (conversation_id, stored_content),
         )
         stored_user_message = cursor.fetchone()
 
         # A fresh chat gets its title from this first question unless renamed.
         generated_title = None
         if first_user_turn and conversation["title"] == AI_DEFAULT_CONVERSATION_TITLE:
-            generated_title = derive_ai_chat_title(message_text)
+            generated_title = derive_ai_chat_title(visible_text)
             cursor.execute(
                 "UPDATE ai_conversations SET title = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
                 (generated_title, conversation_id),
@@ -5006,16 +5320,20 @@ def send_ai_message(conversation_id):
         connection = None
         cursor = None
 
-        database_context = gather_ai_database_context(message_text)
+        database_context = gather_ai_database_context(visible_text)
 
         api_key = os.environ.get("GROQ_API_KEY")
         if api_key:
             try:
                 client = Groq(api_key=api_key)
                 configured_model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-                prompt = build_ai_chat_prompt(transcript_messages, message_text, database_context)
-                reply_text = generate_ai_response(client, prompt, configured_model) or \
-                    "IVY could not generate a response. Please try again."
+                prompt = build_ai_chat_prompt(transcript_messages, visible_text, database_context)
+                if image_urls:
+                    reply_text = generate_ai_vision_response(client, prompt, image_urls) or \
+                        "IVY could not analyze the attached image(s). Please try again."
+                else:
+                    reply_text = generate_ai_response(client, prompt, configured_model) or \
+                        "IVY could not generate a response. Please try again."
             except Exception as error:
                 # Keep provider details and credentials server-side.
                 print(f"IVY chat error: {error}")
@@ -5047,7 +5365,7 @@ def send_ai_message(conversation_id):
             "conversation_id": conversation_id,
             "user_message": {
                 "id": stored_user_message["id"],
-                "content": message_text,
+                "content": ai_visible_content(stored_user_message["content"]) if "content" in stored_user_message else visible_text,
                 "created_at": stored_user_message["created_at"].isoformat(),
             },
             "reply": {

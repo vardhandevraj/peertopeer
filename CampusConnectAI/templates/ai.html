@@ -94,6 +94,7 @@
                 <div class="chat-timeline" id="aiChatBox">
                     {% for message in chat_messages %}
                     {% set is_user = message.role == 'user' %}
+                    {% set att_names = message.content|ai_attachments %}
                     <article class="message-row {% if is_user %}is-own{% else %}is-ivy{% endif %}">
                         {% if not is_user %}<div class="message-avatar ivy-avatar">✦</div>{% endif %}
                         <div class="message-stack">
@@ -103,7 +104,13 @@
                                 <time datetime="{{ campus_time(message.created_at).isoformat() if message.created_at else '' }}">{{ campus_time(message.created_at).strftime('%H:%M') if message.created_at else '' }}</time>
                             </div>
                             <div class="message-bubble {% if not is_user %}ivy-message{% endif %}">
-                                <div class="message-content" {% if not is_user %}data-markdown="true"{% endif %}>{{ message.content }}</div>
+                                {% if att_names %}
+                                <div class="attachment-note" title="{{ att_names|join(', ') }}">
+                                    📎 {{ att_names|length }} file(s) attached{% if message.content|ai_visible %}: {{ message.content|ai_visible }}{% endif %}
+                                </div>
+                                {% else %}
+                                <div class="message-content" {% if not is_user %}data-markdown="true"{% endif %}>{{ message.content|ai_visible }}</div>
+                                {% endif %}
                             </div>
                         </div>
                     </article>
@@ -119,14 +126,23 @@
 
                 <form class="message-composer" id="aiChatForm" novalidate>
                     <input type="hidden" id="aiConversationId" value="{{ selected_conversation.id }}">
-                    <div class="composer-shell">
-                        <textarea id="aiMessageText" maxlength="4000" rows="1" placeholder="Message IVY…" aria-label="Message IVY"></textarea>
+                    <div class="composer-attachments" id="aiAttachmentList" hidden></div>
+                    <div class="composer-shell" id="aiComposerShell">
+                        <textarea id="aiMessageText" maxlength="4000" rows="1" placeholder="Message IVY… attach a PDF, notes or an image" aria-label="Message IVY"></textarea>
                         <div class="composer-footer">
                             <span class="composer-counter" id="ivyThinking" hidden>✦ IVY is thinking…</span>
-                            <button id="aiSendBtn" class="send-message-button" type="submit" aria-label="Send message">
-                                <span>Send</span>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-                            </button>
+                            <div class="composer-actions">
+                                <input type="file" id="aiAttachInput"
+                                    accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.docx"
+                                    multiple hidden aria-hidden="true">
+                                <button type="button" id="aiAttachBtn" class="attach-button" aria-label="Attach a file" title="Attach a file">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                                </button>
+                                <button id="aiSendBtn" class="send-message-button" type="submit" aria-label="Send message">
+                                    <span>Send</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </form>

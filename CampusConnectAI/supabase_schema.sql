@@ -4,7 +4,8 @@
 -- How to run:
 --   1. Create a project at https://supabase.com
 --   2. Open the SQL Editor in the Supabase dashboard and paste this file, then run it.
---   3. Create the public Storage buckets listed at the bottom of this file.
+--   3. Create the four public Storage buckets listed near the bottom of this
+--      file. The script also creates the matching Storage policies.
 
 -- The users table stores student account and profile information.
 CREATE TABLE IF NOT EXISTS users (
@@ -318,3 +319,37 @@ CREATE INDEX IF NOT EXISTS idx_chat_history_user
 --   post-files     : Post attachments (images, PDFs, PPTs) (public)
 --   resources      : Shared learning resources         (public)
 --   chat-files     : Group chat avatars                (public)
+
+-- Storage policies. The Flask server uploads with the publishable key, which
+-- acts as the `anon` role against Storage. Without these policies every upload
+-- fails with 403 "new row violates row-level security policy".
+DROP POLICY IF EXISTS "app_buckets_insert" ON storage.objects;
+CREATE POLICY "app_buckets_insert"
+    ON storage.objects FOR INSERT TO anon, authenticated
+    WITH CHECK (
+        bucket_id IN ('profile-images', 'post-files', 'resources', 'chat-files')
+    );
+
+-- Allow replacing an object at a path you can see (overwrite semantics).
+DROP POLICY IF EXISTS "app_buckets_update" ON storage.objects;
+CREATE POLICY "app_buckets_update"
+    ON storage.objects FOR UPDATE TO anon, authenticated
+    USING (
+        bucket_id IN ('profile-images', 'post-files', 'resources', 'chat-files')
+    );
+
+-- Public read access so media_url() links work without signed URLs.
+DROP POLICY IF EXISTS "app_buckets_select" ON storage.objects;
+CREATE POLICY "app_buckets_select"
+    ON storage.objects FOR SELECT TO anon, authenticated
+    USING (
+        bucket_id IN ('profile-images', 'post-files', 'resources', 'chat-files')
+    );
+
+-- Allow server-side cleanup through supabase.storage.from_(bucket).remove().
+DROP POLICY IF EXISTS "app_buckets_delete" ON storage.objects;
+CREATE POLICY "app_buckets_delete"
+    ON storage.objects FOR DELETE TO anon, authenticated
+    USING (
+        bucket_id IN ('profile-images', 'post-files', 'resources', 'chat-files')
+    );

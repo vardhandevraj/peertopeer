@@ -42,6 +42,10 @@
 
             <nav class="sidebar-nav" aria-label="Primary">
                 {% set endpoint = request.endpoint or '' %}
+                {# The AI chat lives on several endpoints (/ai redirects straight into
+                   /ai/<conversation_id>), so match the whole assistant family rather
+                   than a single endpoint, or the navigation item never highlights. #}
+                {% set ai_active = endpoint in ('ai_assistant', 'open_ai_conversation', 'ai_study_plan') %}
                 {% set nav_items = [
                     ('feed', 'Feed', 'home'),
                     ('profile', 'Profile', 'user'),
@@ -53,7 +57,8 @@
                     ('ai_assistant', 'AI Assistant', 'sparkles')
                 ] %}
                 {% for href, label, icon in nav_items %}
-                    <a class="sidebar-link {% if endpoint == href %}is-active{% endif %}" href="{{ url_for(href) }}" {% if endpoint == href %}aria-current="page"{% endif %}>
+                    {% set item_active = (href == 'ai_assistant' and ai_active) or (href != 'ai_assistant' and endpoint == href) %}
+                    <a class="sidebar-link {% if item_active %}is-active{% endif %}" href="{{ url_for(href) }}" {% if item_active %}aria-current="page"{% endif %}>
                         <i data-lucide="{{ icon }}"></i>
                         <span>{{ label }}</span>
                     </a>
@@ -83,7 +88,7 @@
                     {% endif %}
                     <div class="sidebar-account-copy">
                         <strong>{{ cu.full_name if cu else '' }}</strong>
-                        <span>{{ cu.email if cu else '' }}</span>
+                        <span title="{{ cu.email if cu else '' }}">{{ cu.email if cu else '' }}</span>
                         {% if cu and cu.role == 'ADMIN' %}
                             <span class="sidebar-role-badge">Admin</span>
                         {% endif %}
@@ -130,6 +135,7 @@
 
     <nav class="mobile-bottom-nav" aria-label="Mobile primary">
         {% set endpoint = request.endpoint or '' %}
+        {% set ai_active = endpoint in ('ai_assistant', 'open_ai_conversation', 'ai_study_plan') %}
         {% set mobile_items = [
             ('feed', 'Feed', 'home'),
             ('students', 'Students', 'users'),
@@ -141,7 +147,8 @@
             ('profile', 'Profile', 'user')
         ] %}
         {% for href, label, icon in mobile_items %}
-            <a class="bottom-nav-link {% if endpoint == href %}is-active{% endif %}" href="{{ url_for(href) }}" {% if endpoint == href %}aria-current="page"{% endif %}>
+            {% set item_active = (href == 'ai_assistant' and ai_active) or (href != 'ai_assistant' and endpoint == href) %}
+            <a class="bottom-nav-link {% if item_active %}is-active{% endif %}" href="{{ url_for(href) }}" {% if item_active %}aria-current="page"{% endif %}>
                 <i data-lucide="{{ icon }}"></i><span>{{ label }}</span>
             </a>
         {% endfor %}
@@ -152,6 +159,7 @@
         {% endif %}
     </nav>
 
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
     {% block scripts %}{% endblock %}
 </body>

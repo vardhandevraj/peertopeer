@@ -7,6 +7,11 @@
     const thinkingIndicator = document.getElementById("ivyThinking");
     const conversationInput = document.getElementById("aiConversationId");
     const headerTitle = document.getElementById("aiHeaderTitle");
+    const attachButton = document.getElementById("aiAttachBtn");
+    const attachInput = document.getElementById("aiAttachInput");
+    const attachmentList = document.getElementById("aiAttachmentList");
+    const composerShell = document.getElementById("aiComposerShell");
+    const pendingAttachments = [];
 
     const scrollToLatest = () => {
         if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
@@ -24,6 +29,7 @@
 
     const setBusy = (busy) => {
         if (sendButton) sendButton.disabled = busy;
+        if (attachButton) attachButton.disabled = busy;
         if (thinkingIndicator) thinkingIndicator.hidden = !busy;
     };
 
@@ -76,13 +82,137 @@
         }
     };
 
+    // ── Attachments ─────────────────────────────────────────────
+    const MAX_ATTACHMENTS = 4;
+    const MAX_FILE_BYTES = 10 * 1024 * 1024;
+    const ATTACH_RE = /\.(png|jpe?g|gif|webp|pdf|txt|docx)$/i;
+    const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
+
+    const formatBytes = (bytes) => {
+        if (!Number.isFinite(bytes) || bytes <= 0) return "";
+        const units = ["B", "KB", "MB"];
+        let value = bytes;
+        let unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+            value /= 1024;
+            unit += 1;
+        }
+        return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+    };
+
+    const addAttachments = (fileList) => {
+        const incoming = Array.from(fileList || []);
+        if (!incoming.length) return;
+        let notice = null;
+        incoming.forEach((file) => {
+            const name = (file && file.name) || "";
+            if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+                notice = notice || `You can attach at most ${MAX_ATTACHMENTS} files per message.`;
+                return;
+            }
+            if (!ATTACH_RE.test(name)) {
+                notice = notice || `"${name || "this file"}" is not an allowed type. Use a PDF, DOCX, TXT or an image.`;
+                return;
+            }
+            if (file.size > MAX_FILE_BYTES) {
+                notice = notice || `"${name}" is larger than the 10 MB limit.`;
+                return;
+            }
+            const alreadyAdded = pendingAttachments.some(
+                (existing) => existing.name === file.name && existing.size === file.size
+            );
+            if (!alreadyAdded) {
+                pendingAttachments.push(file);
+                if (IMAGE_RE.test(name) && !file.__previewUrl) {
+                    file.__previewUrl = URL.createObjectURL(file);
+                }
+            }
+        });
+        if (notice) showChatNotice(notice);
+        renderAttachments();
+    };
+
+    const removeAttachment = (index) => {
+        const file = pendingAttachments[index];
+        if (file && file.__previewUrl) URL.revokeObjectURL(file.__previewUrl);
+        pendingAttachments.splice(index, 1);
+        renderAttachments();
+    };
+
+    const renderAttachments = () => {
+        if (!attachmentList) return;
+        attachmentList.innerHTML = "";
+        if (!pendingAttachments.length) {
+            attachmentList.hidden = true;
+            return;
+        }
+        attachmentList.hidden = false;
+        pendingAttachments.forEach((file, index) => {
+            const chip = document.createElement("div");
+            chip.className = "attachment-chip";
+            const thumb = document.createElement("span");
+            thumb.className = "attachment-thumb";
+            if (file.__previewUrl) {
+                thumb.style.backgroundImage = `url("${file.__previewUrl}")`;
+            } else {
+                thumb.textContent = "📄";
+            }
+            const meta = document.createElement("span");
+            meta.className = "attachment-copy";
+            const name = document.createElement("strong");
+            name.textContent = file.name || "file";
+            name.title = file.name || "";
+            const size = document.createElement("small");
+            size.textContent = formatBytes(file.size);
+            meta.append(name, size);
+            const removeBtn = document.createElement("button");
+            removeBtn.type = "button";
+            removeBtn.className = "attachment-remove";
+            removeBtn.setAttribute("aria-label", `Remove ${file.name || "file"}`);
+            removeBtn.textContent = "×";
+            removeBtn.addEventListener("click", () => removeAttachment(index));
+            chip.append(thumb, meta, removeBtn);
+            attachmentList.appendChild(chip);
+        });
+    };
+
+    if (attachButton && attachInput) {
+        attachButton.addEventListener("click", () => attachInput.click());
+        attachInput.addEventListener("change", () => {
+            addAttachments(attachInput.files);
+            attachInput.value = "";
+        });
+    }
+
+    if (composerShell) {
+        ["dragenter", "dragover"].forEach((type) => {
+            composerShell.addEventListener(type, (event) => {
+                event.preventDefault();
+                composerShell.classList.add("is-dragover");
+            });
+        });
+        ["dragleave", "drop"].forEach((type) => {
+            composerShell.addEventListener(type, (event) => {
+                event.preventDefault();
+                composerShell.classList.remove("is-dragover");
+            });
+        });
+        composerShell.addEventListener("drop", (event) => {
+            if (form.dataset.busy === "1") return;
+            addAttachments(event.dataTransfer && event.dataTransfer.files);
+        });
+    }
+
     form.addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (form.dataset.busy === "1") return;
         const content = textarea.value.trim();
-        if (!content || form.dataset.busy === "1") return;
+        const hasFiles = pendingAttachments.length > 0;
+        if (!content && !hasFiles) return;
 
         form.dataset.busy = "1";
         setBusy(true);
+        const sentText = content;
         textarea.value = "";
         textarea.style.height = "auto";
 
@@ -90,16 +220,37 @@
             sender_id: "self",
             sender_name: "You",
             message_type: "text",
-            message_text: content,
+            message_text: hasFiles
+                ? (sentText || `Sent ${pendingAttachments.length} file(s)`)
+                : sentText,
             created_at: new Date().toISOString(),
         });
 
+        const files = pendingAttachments.slice();
+        files.forEach((file) => {
+            if (file.__previewUrl) URL.revokeObjectURL(file.__previewUrl);
+        });
+        pendingAttachments.length = 0;
+        renderAttachments();
+
         try {
-            const response = await fetch(`/ai/conversations/${conversationId}/message`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrfToken() },
-                body: JSON.stringify({ content }),
-            });
+            let response;
+            if (files.length) {
+                const body = new FormData();
+                body.append("content", content || "");
+                files.forEach((file) => body.append("attachments", file, file.name || "file"));
+                response = await fetch(`/ai/conversations/${conversationId}/message`, {
+                    method: "POST",
+                    headers: { "X-CSRFToken": getCsrfToken() },
+                    body,
+                });
+            } else {
+                response = await fetch(`/ai/conversations/${conversationId}/message`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrfToken() },
+                    body: JSON.stringify({ content }),
+                });
+            }
             const result = await response.json().catch(() => ({}));
 
             if (!response.ok || !result.ok) {

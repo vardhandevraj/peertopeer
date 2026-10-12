@@ -392,6 +392,7 @@ button { cursor: pointer; }
 .sidebar-account-copy {
     flex: 1;
     min-width: 0;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
 }
@@ -403,7 +404,19 @@ button { cursor: pointer; }
     text-overflow: ellipsis;
 }
 
-.sidebar-account-copy span { font-size: var(--fs-xs); color: var(--text-3); }
+.sidebar-account-copy span {
+    /* Long unbreakable addresses (or 5-char blocks of a campus email) used to
+       paint past the copy box and overlap the logout button. Keeping the span
+       inside its flex box and truncating it stops the overlap in dark, light
+       and collapsed sidebar states. */
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+}
 
 .sidebar-role-badge {
     margin-top: 3px;
@@ -421,9 +434,10 @@ button { cursor: pointer; }
 .sidebar-logout {
     display: grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
+    width: 34px;
+    height: 34px;
     flex-shrink: 0;
+    margin: -2px -6px -2px 4px;
     border-radius: 9px;
     color: var(--text-3);
     transition: color var(--dur) ease, background var(--dur) ease;
@@ -2907,12 +2921,137 @@ details.row-menu[open] summary { background: var(--elev-3); color: var(--text-1)
 }
 
 .send-message-button:hover { opacity: 0.92; transform: translateY(-1px); }
+.send-message-button:disabled { opacity: 0.55; pointer-events: none; }
 .send-message-button svg { width: 14px; height: 14px; }
 
 .composer-counter {
     color: var(--teal);
     font-size: var(--fs-sm);
     font-weight: 600;
+}
+
+/* ── Composer attachments (AI chat) ────────────────────────── */
+.composer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.attach-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    background: var(--elev-1);
+    color: var(--text-2);
+    transition: color var(--dur) ease, border-color var(--dur) ease, background var(--dur) ease;
+}
+
+.attach-button:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--elev-2);
+}
+
+.attach-button:disabled { opacity: 0.5; pointer-events: none; }
+
+.composer-shell.is-dragover {
+    border-color: var(--accent);
+    outline: 2px dashed rgba(124, 108, 255, 0.45);
+    outline-offset: 2px;
+}
+
+.composer-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    max-width: 260px;
+    padding: 6px 8px 6px 6px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--elev-2);
+    animation: ivy-rise 0.18s var(--ease) both;
+}
+
+.attachment-thumb {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    font-size: 15px;
+    background: var(--elev-1) center/cover no-repeat;
+    border: 1px solid var(--border);
+}
+
+.attachment-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.attachment-copy strong {
+    font-size: var(--fs-xs);
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.attachment-copy small {
+    font-size: var(--fs-2xs);
+    color: var(--text-3);
+}
+
+.attachment-remove {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    margin-left: 2px;
+    border: none;
+    border-radius: 7px;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--text-3);
+    background: transparent;
+    transition: color var(--dur) ease, background var(--dur) ease;
+}
+
+.attachment-remove:hover { color: var(--danger); background: rgba(244, 63, 94, 0.1); }
+
+.attachment-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--text-2);
+    background: var(--elev-1);
+    border: 1px solid var(--border);
+    word-break: break-word;
+}
+
+.message-row.is-own .attachment-note {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #fff;
 }
 
 /* ── Welcome / empty in conversation panel ────────────────── */

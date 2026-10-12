@@ -48,6 +48,10 @@ Copy `.env.example` values into your hosting platform settings.
 
 Optional: set `GROQ_MODEL` to choose a Groq chat model. The default is `openai/gpt-oss-120b`.
 
+Optional: set `GROQ_VISION_MODEL` to choose the multimodal model used when a
+student attaches images. When unset, IVY falls back to `GROQ_MODEL` and then to
+built-in Llama 4 vision models.
+
 ## Video Learning Rooms
 
 Starting a call from any conversation opens a dedicated room at `/call/<room_id>`
@@ -55,9 +59,7 @@ with video, screen sharing, shared chat, and `@ivy` support. WebRTC carries the
 audio/video directly between browsers; Flask-SocketIO only relays signaling and
 room chat; Supabase stores call metadata and messages.
 
-For databases created before this feature, run
-`migrations/004_video_learning_rooms.sql` once in the Supabase SQL Editor.
-Fresh installs get the tables from `supabase_schema.sql` automatically.
+The `call_rooms` / `call_room_participants` tables come from `supabase_schema.sql`.
 
 ## AI Assistant Chats
 
@@ -65,8 +67,13 @@ The `/ai` page hosts unlimited separate IVY conversations. Each chat keeps its
 own message history (`ai_conversations` / `ai_messages` tables), gets an
 automatic title from your first question, and can be renamed, searched, or
 deleted from the sidebar. IVY only ever sees the context of the conversation
-you are typing in. For databases created before this feature, run
-`migrations/005_ai_conversations.sql` once in the Supabase SQL Editor.
+you are typing in.
+
+You can attach up to 4 files (10 MB each, 15 MB total) to a message: images
+(PNG/JPG/GIF/WEBP) go to a vision-capable model, and documents (PDF/DOCX/TXT)
+have their text extracted so IVY can answer about them. Attachments are
+processed in memory only and are never written to disk or shared with other
+students.
 
 ## Password Reset & Moderation
 
@@ -76,11 +83,6 @@ via SMTP when `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD` are set; otherwise they
 are printed to the console for local development. Registered students can
 report posts and users, which admins (users with `is_admin = true`) review at
 `/admin/reports`.
-For databases created before these features, run
-`migrations/007_core_features.sql` once in the Supabase SQL Editor. Migration
-`006_google_auth.sql` (roles: Google Sign-In) should be applied first for
-existing databases. Fresh installs get the tables from `supabase_schema.sql`
-automatically.
 
 Production deployments should set these environment variables (see `.env.example`):
 

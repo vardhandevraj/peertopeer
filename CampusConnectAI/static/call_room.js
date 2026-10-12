@@ -733,10 +733,15 @@
             const candidate = new RTCIceCandidate(data.candidate);
             if (pc && pc.remoteDescription) {
                 pc.addIceCandidate(candidate).catch(() => {});
-            } else if (pc) {
-                if (!pendingCandidates.has(remoteId)) pendingCandidates.set(remoteId, []);
-                pendingCandidates.get(remoteId).push(candidate);
+                return;
             }
+            // Queue until this peer's remote description is set (offer/answer)
+            // or the connection is (re)created. Candidates that arrive before
+            // call_peer_joined, or in the gap between dropAllPeers() and the
+            // reconcile that re-creates every peer, used to be dropped here,
+            // which left a freshly reconnected peer unable to connect.
+            if (!pendingCandidates.has(remoteId)) pendingCandidates.set(remoteId, []);
+            pendingCandidates.get(remoteId).push(candidate);
         }
     });
 
