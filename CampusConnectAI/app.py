@@ -26,9 +26,8 @@ from supabase import create_client, Client
 from PIL import Image
 import urllib.parse
 from pypdf import PdfReader
-from flask import Flask, flash, redirect, render_template, request, session, url_for, g
+from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit, join_room, leave_room
-from psycopg2 import Error
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -1753,7 +1752,6 @@ def ai_study_plan():
     )
 
     api_key = os.environ.get("GROQ_API_KEY")
-    prompt = build_ai_chat_prompt([], user_request)
     try:
         client = Groq(api_key=api_key)
         configured_model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
@@ -2665,6 +2663,8 @@ def students():
 
     all_students = []
     pending_requests = []
+    following_ids = set()
+    friend_states = {}
 
     try:
         connection = get_db_connection()
@@ -2685,6 +2685,35 @@ def students():
             (session["user_id"],),
         )
         pending_requests = cursor.fetchall()
+
+        # Which peers the logged-in student already follows, so the directory
+        # can show Follow vs Unfollow instead of both at once.
+        cursor.execute(
+            "SELECT following_id FROM followers WHERE follower_id = %s",
+            (session["user_id"],),
+        )
+        following_ids = {row["following_id"] for row in cursor.fetchall()}
+
+        # Existing friend relationships (pending or accepted) keyed by the other
+        # student, so Connect reflects the real state just like the profile page.
+        cursor.execute(
+            """
+            SELECT id, sender_id, receiver_id, status
+            FROM friends
+            WHERE status IN ('pending', 'accepted')
+            AND (sender_id = %s OR receiver_id = %s)
+            """,
+            (session["user_id"], session["user_id"]),
+        )
+        for row in cursor.fetchall():
+            other_id = row["receiver_id"] if row["sender_id"] == session["user_id"] else row["sender_id"]
+            if row["status"] == "accepted":
+                state = "accepted"
+            elif row["sender_id"] == session["user_id"]:
+                state = "request_sent"
+            else:
+                state = "request_received"
+            friend_states[other_id] = {"status": state, "id": row["id"]}
 
     except Error as error:
         flash_db_error(error)
@@ -2711,6 +2740,8 @@ def students():
         students=all_students,
         pending_requests=pending_requests,
         departments=departments,
+        following_ids=following_ids,
+        friend_states=friend_states,
         user=get_logged_in_user(),
     )
 

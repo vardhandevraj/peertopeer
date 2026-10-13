@@ -134,25 +134,48 @@
                                         </p>
                                     </div>
                                 </div>
+                                {% set friend_state = friend_states.get(student.id) %}
                                 <div class="row-actions">
-                                    <form action="{{ url_for('send_friend_request', receiver_id=student.id) }}" method="POST">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <button class="small-action-button" type="submit">
-                                            <i data-lucide="user-plus" aria-hidden="true"></i>
-                                            Connect
-                                        </button>
-                                    </form>
-                                    <form action="{{ url_for('follow', following_id=student.id) }}" method="POST">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <button class="small-action-button light-button" type="submit">
-                                            <i data-lucide="arrow-right" aria-hidden="true"></i>
-                                            Follow
-                                        </button>
-                                    </form>
-                                    <form action="{{ url_for('unfollow', following_id=student.id) }}" method="POST">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <button class="small-action-button light-button" type="submit">Unfollow</button>
-                                    </form>
+                                    {% if friend_state and friend_state.status == 'accepted' %}
+                                        <form action="{{ url_for('remove_friend', friend_id=friend_state.id) }}" method="POST">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="small-action-button light-button" type="submit">Remove Friend</button>
+                                        </form>
+                                    {% elif friend_state and friend_state.status == 'request_sent' %}
+                                        <button class="small-action-button light-button" type="button" disabled>Request Sent</button>
+                                    {% elif friend_state and friend_state.status == 'request_received' %}
+                                        <form action="{{ url_for('respond_friend_request', friend_id=friend_state.id, status='accepted') }}" method="POST">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="small-action-button" type="submit">Accept</button>
+                                        </form>
+                                        <form action="{{ url_for('respond_friend_request', friend_id=friend_state.id, status='rejected') }}" method="POST">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="small-action-button light-button" type="submit">Decline</button>
+                                        </form>
+                                    {% else %}
+                                        <form action="{{ url_for('send_friend_request', receiver_id=student.id) }}" method="POST">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="small-action-button" type="submit">
+                                                <i data-lucide="user-plus" aria-hidden="true"></i>
+                                                Connect
+                                            </button>
+                                        </form>
+                                    {% endif %}
+
+                                    {% if student.id in following_ids %}
+                                        <form action="{{ url_for('unfollow', following_id=student.id) }}" method="POST">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="small-action-button light-button" type="submit">Unfollow</button>
+                                        </form>
+                                    {% else %}
+                                        <form action="{{ url_for('follow', following_id=student.id) }}" method="POST">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="small-action-button light-button" type="submit">
+                                                <i data-lucide="arrow-right" aria-hidden="true"></i>
+                                                Follow
+                                            </button>
+                                        </form>
+                                    {% endif %}
 
                                     {# Reporting is a low-frequency, destructive-adjacent
                                        action, so it lives in the overflow menu instead of
