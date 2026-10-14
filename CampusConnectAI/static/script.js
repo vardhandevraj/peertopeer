@@ -332,11 +332,16 @@ document.addEventListener("DOMContentLoaded", () => {
     // One shared socket carries chat, inbox updates, and Learning Room signaling.
     // Reuse a socket an earlier script (e.g. call_room.js) already opened.
     const socket = window.peerverseSocket || (window.io ? window.io() : null);
-    if (socket) window.peerverseSocket = socket;
     if (socket) {
         window.peerverseSocket = socket;
         socket.on("connect", () => socket.emit("join_inbox"));
+        // A dropped/rejected connection previously left the composer silently
+        // inert, so sending looked like it did nothing at all.
+        socket.on("connect_error", () => showChatNotice("Chat connection lost — reconnecting…"));
+        socket.io.on("reconnect_failed", () => showChatNotice("Chat is offline. Please refresh the page."));
         initializeChat(socket);
         initializeCallInvitations(socket);
+    } else if (document.getElementById("chatForm")) {
+        showChatNotice("Chat could not start. Please refresh the page.");
     }
 });

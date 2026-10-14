@@ -19,7 +19,7 @@ from email.mime.multipart import MIMEMultipart
 
 from groq import Groq
 import psycopg2
-from psycopg2 import Error
+from psycopg2 import Error, OperationalError
 from psycopg2 import pool as pgpool
 from psycopg2.extras import RealDictCursor
 from supabase import create_client, Client
@@ -392,7 +392,10 @@ def _pooled_connection():
             _db_pool.putconn(conn, close=True)
         except Exception:
             pass
-    raise RuntimeError("Could not obtain a database connection from the pool.")
+    # Raised as a psycopg2 error (OperationalError subclasses Error) so every
+    # existing `except Error` handler catches a pool failure instead of letting
+    # a bare RuntimeError turn into an unhandled 500 or a dropped socket event.
+    raise OperationalError("Could not obtain a database connection from the pool.")
 
 
 def db_cursor(connection, dictionary=False):
@@ -1885,12 +1888,16 @@ def google_callback():
         state_data = session.get("google_oauth_state", None)
         if not state_param or not code or not state_data or state_data.get("state") != state_param:
             raise ValueError("This sign-in link has expired or was already used.")
+        # Consume the state immediately so this authorization response can never
+        # be replayed against the same session.
+        redirect_uri = state_data.get("redirect_uri")
+        session.pop("google_oauth_state", None)
 
         form = urllib.parse.urlencode({
             "code": code,
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uri": state_data.get("redirect_uri"),
+            "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",
         })
         token_status, token_body = _http_curl(
@@ -1986,7 +1993,6 @@ def google_callback():
         update_last_seen(user["id"])
 
         flash("Signed in with Google. Welcome back!")
-        session.pop("google_oauth_state", None)  # Clear used OAuth state
         return redirect(url_for("feed"))
 
     except Exception as error:
@@ -3479,7 +3485,7 @@ def join_chat(data):
             (conversation_id, session["user_id"]),
         )
         allowed = cursor.fetchone()
-    except Error:
+    except (Error, RuntimeError):
         allowed = None
     finally:
         if "connection" in locals() and not connection.closed:
@@ -3551,7 +3557,7 @@ def send_chat_message(data):
         )
         participant_ids = [participant["user_id"] for participant in cursor.fetchall()]
         connection.commit()
-    except Error as error:
+    except (Error, RuntimeError) as error:
         print(f"Socket DB error: {error}")
         emit("chat_error", {"message": "Your message could not be sent. Please try again."})
         return
@@ -3608,7 +3614,7 @@ def mark_chat_read(data):
             (conversation_id, session["user_id"]),
         )
         connection.commit()
-    except Error:
+    except (Error, RuntimeError):
         pass
     finally:
         if "connection" in locals() and not connection.closed:
@@ -4769,6 +4775,11 @@ AI_MAX_ATTACHMENTS = 4
 AI_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 AI_MAX_ATTACHMENT_TOTAL_BYTES = 15 * 1024 * 1024
 AI_MAX_DOCUMENT_CHARS = 8000
+# Upper bound on the decompressed size of a .docx's document.xml. The uploaded
+# file is already capped at 10 MB, but a zip bomb can declare a tiny compressed
+# entry that expands to gigabytes, so the declared uncompressed size is checked
+# before the entry is read into memory.
+AI_DOCX_XML_MAX_BYTES = 20 * 1024 * 1024
 AI_IMAGE_MAX_SIDE = 1568
 AI_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 AI_DOCUMENT_EXTENSIONS = {"pdf", "docx", "txt"}
@@ -4883,10 +4894,25 @@ def extract_docx_text(raw, name):
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             if "word/document.xml" not in archive.namelist():
                 raise ValueError(f"'{name}' is not a valid .docx document.")
-            root = ET.fromstring(archive.read("word/document.xml"))
+            # Reject a zip bomb before decompressing: the declared uncompressed
+            # size of the entry must stay inside the cap.
+            info = archive.getinfo("word/document.xml")
+            if info.file_size > AI_DOCX_XML_MAX_BYTES:
+                raise ValueError(f"'{name}' is too large to read.")
+            document_xml = archive.read("word/document.xml")
     except ValueError:
         raise
     except Exception:
+        raise ValueError(f"'{name}' could not be read as a .docx document.")
+
+    # ElementTree expands internal DTD entities, so a hand-crafted document.xml
+    # could balloon past the size check ("billion laughs"). A real .docx never
+    # carries a DOCTYPE/ENTITY declaration, so reject those outright.
+    if b"<!DOCTYPE" in document_xml or b"<!ENTITY" in document_xml:
+        raise ValueError(f"'{name}' contains unsupported XML and cannot be read.")
+    try:
+        root = ET.fromstring(document_xml)
+    except ET.ParseError:
         raise ValueError(f"'{name}' could not be read as a .docx document.")
 
     ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -5408,9 +5434,8 @@ def send_ai_message(conversation_id):
         }
 
     except (Error, RuntimeError) as error:
-        # RuntimeError covers "Could not obtain a database connection from the
-        # pool" raised by _pooled_connection, which is not a psycopg2 Error and
-        # would otherwise escape as an unhandled 500.
+        # Error already covers the pool's OperationalError; RuntimeError is kept
+        # as a backstop so no unexpected failure escapes as an unhandled 500.
         print(f"AI chat persistence error: {error}")
         return {"ok": False, "error": "Your message could not be saved. Please try again."}, 500
     finally:

@@ -2994,6 +2994,14 @@ details.row-menu[open] summary { background: var(--elev-3); color: var(--text-1)
     font-size: 15px;
     background: var(--elev-1) center/cover no-repeat;
     border: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.attachment-thumb img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
 }
 
 .attachment-copy {

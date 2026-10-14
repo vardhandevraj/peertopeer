@@ -191,17 +191,6 @@ CREATE TABLE IF NOT EXISTS resources (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- The chat_history table stores student questions and AI assistant answers.
--- MEDIUMTEXT simply becomes TEXT because PostgreSQL TEXT has no length limit.
-CREATE TABLE IF NOT EXISTS chat_history (
-    id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL,
-    question TEXT NOT NULL,
-    answer TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
 -- The ai_conversations table stores the student's separate IVY chat threads.
 CREATE TABLE IF NOT EXISTS ai_conversations (
     id SERIAL PRIMARY KEY,
@@ -309,8 +298,6 @@ CREATE INDEX IF NOT EXISTS idx_friends_receiver_status
     ON friends (receiver_id, status);
 CREATE INDEX IF NOT EXISTS idx_followers_following
     ON followers (following_id);
-CREATE INDEX IF NOT EXISTS idx_chat_history_user
-    ON chat_history (user_id);
 
 -- Storage buckets to create manually in the Supabase dashboard
 -- (Storage → New bucket → allow public access):

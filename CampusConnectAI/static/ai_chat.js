@@ -153,7 +153,10 @@
             const thumb = document.createElement("span");
             thumb.className = "attachment-thumb";
             if (file.__previewUrl) {
-                thumb.style.backgroundImage = `url("${file.__previewUrl}")`;
+                const preview = document.createElement("img");
+                preview.src = file.__previewUrl;
+                preview.alt = file.name || "attachment preview";
+                thumb.appendChild(preview);
             } else {
                 thumb.textContent = "📄";
             }
