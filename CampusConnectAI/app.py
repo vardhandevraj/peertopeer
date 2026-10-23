@@ -3358,11 +3358,26 @@ def save_and_emit_ivy_message(conversation_id, message_text):
     try:
         connection = get_db_connection()
         cursor = db_cursor(connection, dictionary=True)
-        cursor.execute(
-            "INSERT INTO messages (conversation_id, sender_id, message_text, message_type) "
-            "VALUES (%s, NULL, %s, 'ai')",
-            (conversation_id, message_text),
-        )
+        try:
+            cursor.execute(
+                "INSERT INTO messages (conversation_id, sender_id, message_text, message_type) "
+                "VALUES (%s, NULL, %s, 'ai')",
+                (conversation_id, message_text),
+            )
+        except Error:
+            connection.rollback()
+            cursor = db_cursor(connection, dictionary=True)
+            cursor.execute(
+                """
+                INSERT INTO messages
+                    (conversation_id, sender_id, receiver_id, message_text, message_type,
+                     is_read, topic, extension, payload, event, private, updated_at, inserted_at,
+                     binary_payload, skip_broadcast)
+                VALUES
+                    (%s, NULL, %s, %s, 'ai', FALSE, 'message', NULL, '{}'::jsonb, 'message', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, FALSE)
+                """,
+                (conversation_id, None, message_text),
+            )
         cursor.execute("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = %s", (conversation_id,))
         cursor.execute(
             "SELECT user_id FROM conversation_participants WHERE conversation_id = %s",
@@ -3543,13 +3558,29 @@ def send_chat_message(data):
             emit("chat_error", {"message": "You do not have access to this conversation."})
             return
 
-        cursor.execute(
-            """
-            INSERT INTO messages (conversation_id, sender_id, message_text, message_type)
-            VALUES (%s, %s, %s, 'text')
-            """,
-            (conversation_id, sender_id, message_text),
-        )
+        try:
+            cursor.execute(
+                """
+                INSERT INTO messages (conversation_id, sender_id, message_text, message_type)
+                VALUES (%s, %s, %s, 'text')
+                """,
+                (conversation_id, sender_id, message_text),
+            )
+        except Error:
+            connection.rollback()
+            cursor = db_cursor(connection, dictionary=True)
+            cursor.execute(
+                """
+                INSERT INTO messages
+                    (conversation_id, sender_id, receiver_id, message_text, message_type,
+                     is_read, topic, extension, payload, event, private, updated_at, inserted_at,
+                     binary_payload, skip_broadcast)
+                VALUES
+                    (%s, %s, %s, %s, 'text', FALSE, 'message', NULL, '{}'::jsonb, 'message', FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, FALSE)
+                """,
+                (conversation_id, sender_id, None, message_text),
+            )
+
         cursor.execute("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = %s", (conversation_id,))
         cursor.execute(
             "SELECT user_id FROM conversation_participants WHERE conversation_id = %s",
