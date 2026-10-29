@@ -138,9 +138,19 @@ function initializeChat(socket) {
         markCurrentConversationRead();
     };
 
+    // The text of a message that has not yet been echoed back by the server.
+    // Kept so a failed send can be restored instead of silently disappearing.
+    let unconfirmedText = "";
+
     socket.on("connect", subscribe);
+    // If the socket connected before this page attached its handlers, the
+    // "connect" event will not fire again and the student would never join the
+    // conversation room -- their own messages would then be broadcast to the
+    // room but never come back to them, looking like the message vanished.
+    if (socket.connected) subscribe();
     socket.on("receive_chat_message", (data) => {
         if (String(data.conversation_id) !== String(conversationId)) return;
+        if (String(data.sender_id) === String(currentUserId)) unconfirmedText = "";
         const welcome = chatBox.querySelector(".conversation-welcome");
         if (welcome) welcome.remove();
         chatBox.appendChild(createMessageElement(data, currentUserId));
@@ -151,12 +161,27 @@ function initializeChat(socket) {
         updateConversationItem(data, conversationId);
         if (String(data.conversation_id) === String(conversationId)) markCurrentConversationRead();
     });
-    socket.on("chat_error", (data) => showChatNotice(data.message || "Something went wrong with chat."));
+    socket.on("chat_error", (data) => {
+        showChatNotice(data.message || "Something went wrong with chat.");
+        // The message did not reach the thread, so put the text back.
+        if (unconfirmedText && !messageText.value.trim()) {
+            messageText.value = unconfirmedText;
+            messageText.dispatchEvent(new Event("input"));
+        }
+        unconfirmedText = "";
+    });
 
     form.addEventListener("submit", (event) => {
         event.preventDefault();
         const text = messageText.value.trim();
         if (!text) return;
+        // Emitting while disconnected buffers the event in the client and makes
+        // the message look like it vanished. Keep the text and warn instead.
+        if (!socket.connected) {
+            showChatNotice("Chat is reconnecting — please wait a moment and send again.");
+            return;
+        }
+        unconfirmedText = text;
         socket.emit("send_chat_message", { conversation_id: conversationId, message_text: text });
         messageText.value = "";
         messageText.style.height = "auto";
