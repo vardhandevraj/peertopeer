@@ -222,6 +222,7 @@
 {% endblock %}
 
 {% block scripts %}
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
         (function () {
             const searchInput = document.getElementById("studentSearch");
@@ -253,8 +254,12 @@
                 });
             };
 
-            searchInput.addEventListener("input", applyFilter);
-            deptFilter.addEventListener("change", applyFilter);
+            const search = document.getElementById("studentSearch");
+            const deptFilter = document.getElementById("departmentFilter");
+            if (search && deptFilter) {
+                search.addEventListener("input", applyFilter);
+                deptFilter.addEventListener("change", applyFilter);
+            }
         })();
     </script>
 {% endblock %}
