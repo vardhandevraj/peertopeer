@@ -11,6 +11,9 @@ explanations but corrects outdated numbers, adds the features that have shipped 
 records the messaging fix from this release, and finishes with a prioritised assessment and
 roadmap.
 
+> 📄 The original beginner-friendly walkthrough is preserved unchanged at
+> [`PROJECT_REVIEW_v1.md`](PROJECT_REVIEW_v1.md).
+
 ---
 
 ## 1. Executive summary
